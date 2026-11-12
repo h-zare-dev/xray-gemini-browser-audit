@@ -85,7 +85,9 @@ def check_gemini(page, args, label):
     navigation_error = None
     try:
         navigation_budget = max(1000, int(min(args.timeout, args.ready_wait) * 1000))
-        page.goto("https://gemini.google.com/app", wait_until="domcontentloaded",
+        # Commit returns when response headers arrive; waiting for full DOM
+        # can exhaust READY_WAIT even though the country block is on screen.
+        page.goto("https://gemini.google.com/app", wait_until="commit",
                   timeout=navigation_budget)
     except PlaywrightTimeoutError:
         navigation_error = "Page load exceeded pre-submit budget"
@@ -95,7 +97,10 @@ def check_gemini(page, args, label):
         else:
             raise
 
-    while time.monotonic() < deadline:
+    # Always inspect at least once even when navigation used the full budget.
+    first_inspection = True
+    while first_inspection or time.monotonic() < deadline:
+        first_inspection = False
         try:
             # First check country restriction: Gemini can render a blocked
             # landing page without ever creating its prompt editor.
