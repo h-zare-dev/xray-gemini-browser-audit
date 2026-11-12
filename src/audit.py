@@ -110,6 +110,7 @@ class Xray:
 def browser_test(playwright, args, port, login=False):
     context = playwright.chromium.launch_persistent_context(
         user_data_dir=str(Path(args.profile).resolve()),
+        channel="chrome",
         headless=not (args.headed or login),
         proxy={"server": f"socks5://127.0.0.1:{args.socks_port}"},
         viewport={"width": 1280, "height": 900},
@@ -173,6 +174,11 @@ def main():
     parser.add_argument("--answer-wait", type=int, default=40)
     parser.add_argument("--pause", type=float, default=5)
     args = parser.parse_args()
+    if args.login:
+        # Google may block OAuth in an automated browser. Sign in using normal
+        # Chrome first, not through Playwright, without saving any credentials.
+        login_script = Path(__file__).with_name("login.py")
+        raise SystemExit(subprocess.call([sys.executable, str(login_script), "--profile", args.profile]))
     if not shutil.which("docker"):
         parser.error("Docker required; Xray need not be installed on host")
     try:
