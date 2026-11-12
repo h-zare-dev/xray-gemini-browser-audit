@@ -190,19 +190,36 @@ def main():
     p.add_argument("--output", default="reports/session")
     p.add_argument("--socks-port", type=int, default=18998)
     p.add_argument("--timeout", type=int, default=55)
-    p.add_argument("--answer-wait", type=int, default=70)
+    p.add_argument("--answer-wait", type=int, default=None,
+                   help="Gemini response wait seconds (CLI > ANSWER_WAIT in .env > 70)")
     p.add_argument("--response-stable", type=float, default=4,
                    help="Seconds the assistant answer must remain stable before success")
     p.add_argument("--ready-wait", type=int, default=25,
                    help="Wait for Gemini editor to load (seconds)")
-    p.add_argument("--retries", type=int, default=3,
-                   help="Minimum attempts for uncertain/error results (default 3)")
+    p.add_argument("--retries", type=int, default=None,
+                   help="Attempts for uncertain/error results (CLI > RETRIES in .env > 3)")
     p.add_argument("--retry-delay", type=float, default=7,
                    help="Seconds between retry attempts")
     p.add_argument("--pause", type=float, default=8)
     args = p.parse_args()
+
+    # CLI arguments override .env; .env overrides built-in defaults.
+    env = read_env(args.env)
+    try:
+        args.retries = (
+            args.retries if args.retries is not None
+            else int(env.get("RETRIES", "3"))
+        )
+        args.answer_wait = (
+            args.answer_wait if args.answer_wait is not None
+            else int(env.get("ANSWER_WAIT", "70"))
+        )
+    except ValueError:
+        p.error("RETRIES and ANSWER_WAIT must be integer numbers")
     if args.retries < 3:
-        p.error("--retries must be at least 3")
+        p.error("RETRIES must be at least 3")
+    if args.answer_wait < 1:
+        p.error("ANSWER_WAIT must be at least 1 second")
 
     chrome = chrome_bin()
     if not chrome:
@@ -215,7 +232,6 @@ def main():
         p.error("Playwright required: pip install -r requirements.txt")
 
     try:
-        env = read_env(args.env)
         targets, skipped = targets_from_env(env, args.ports)
         if not targets:
             p.error("No supported VLESS entries found")
@@ -230,6 +246,7 @@ def main():
 
     banner("XRAY GEMINI BROWSER AUDIT", [
         f"Mode: {env.get('MODE','vless')} | tests: {len(targets)} | skipped: {len(skipped)}",
+        f"Retries: {args.retries} | Answer wait: {args.answer_wait}s",
         "Sources stay in local .env only; no credentials are committed.",
         "Only Gemini Web behavior is being tested, not Android.",
     ], CYAN)
