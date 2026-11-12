@@ -22,6 +22,17 @@ class CountryBlockTests(unittest.TestCase):
             "Gemini is not available in your region"
         ))
 
+    def test_country_block_is_red_without_three_attempts(self):
+        from session_audit import state_style
+        status, _ = consolidate([("REGION_BLOCKED", "unsupported")])
+        self.assertEqual(status, "REGION_BLOCKED")
+        self.assertEqual(state_style(status)[1], "BLOCKED")
+
+    def test_linebreaks_in_country_block(self):
+        self.assertTrue(REGION.search(
+            "Gemini isn’t currently supported\\nin your country. Stay tuned!"
+        ))
+
     def test_missing_textbox_not_region_block(self):
         state, _ = consolidate([("NO_EDITOR", "not visible")] * 2)
         self.assertEqual(state, "NO_EDITOR")
