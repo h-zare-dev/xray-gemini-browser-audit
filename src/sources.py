@@ -138,6 +138,12 @@ def targets_from_env(env: dict, ports_override: str | None = None):
         if not parsed.hostname or not parsed.port:
             skipped.append((idx, "vless", "Invalid destination/port"))
             continue
+        from vless import outbound_from_url
+        try:
+            outbound_from_url(uri)
+        except (ValueError, TypeError) as exc:
+            skipped.append((idx, "vless", f"Unsupported/invalid VLESS settings: {str(exc)[:100]}"))
+            continue
         name = (parsed.fragment or f"Node_{idx}")
         from urllib.parse import unquote
         targets.append(Target(unquote(name)[:100], uri, parsed.port))
