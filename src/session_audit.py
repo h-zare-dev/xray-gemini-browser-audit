@@ -105,27 +105,42 @@ def check_gemini(page, args, label):
         editor.press("Enter", timeout=12000)
     except Exception:
         return "INCONCLUSIVE", "Could not submit prompt; page may still be loading"
+    # A message appearing twice in the *whole body* is not proof of a model
+    # answer: the user prompt, drafts and accessibility nodes can duplicate it.
+    # We therefore wait for the model-response element AND a stable answer.
     end = time.monotonic() + args.answer_wait
+    candidate_seen = False
+    last_response = ""
+    stable_since = None
     while time.monotonic() < end:
-        page.wait_for_timeout(1800)
+        page.wait_for_timeout(1200)
         try:
             body = page.locator("body").inner_text(timeout=6000)
             if REGION.search(body):
                 return "REGION_BLOCKED", "Gemini explicitly rejected country after submission"
             if LOGIN.search(body):
                 return "LOGIN_REQUIRED", "Google login or security challenge"
-            # Check only generated-response containers to avoid mistaking the
-            # user's own text for an answer.
-            response = page.locator(
-                "model-response .markdown, .model-response-text, "
-                ".response-container .markdown, message-content .markdown"
-            )
-            if response.count() and any(marker in t for t in response.all_inner_texts()):
-                return "WEB_OK", "Gemini Web generated a matching model response"
+
+            # Gemini may put Markdown in several nested components; inspect
+            # the top-level assistant response, not only .markdown children.
+            responses = page.locator("model-response")
+            if responses.count():
+                response_text = responses.last.inner_text(timeout=5000).strip()
+                if marker in response_text:
+                    if response_text == last_response:
+                        if stable_since is None:
+                            stable_since = time.monotonic()
+                        elif time.monotonic() - stable_since >= args.response_stable:
+                            return "WEB_OK", "Gemini assistant reply detected and stable"
+                    else:
+                        last_response = response_text
+                        stable_since = None
             if body.count(marker) >= 2:
-                return "RESPONSE_CANDIDATE", "Possible model reply; response element not verified"
+                candidate_seen = True
         except Exception:
             pass
+    if candidate_seen:
+        return "RESPONSE_CANDIDATE", "Marker appeared but assistant reply not confirmed before timeout"
     return "INCONCLUSIVE", "No confirmed model answer before response timeout"
 
 
@@ -176,6 +191,8 @@ def main():
     p.add_argument("--socks-port", type=int, default=18998)
     p.add_argument("--timeout", type=int, default=55)
     p.add_argument("--answer-wait", type=int, default=70)
+    p.add_argument("--response-stable", type=float, default=4,
+                   help="Seconds the assistant answer must remain stable before success")
     p.add_argument("--ready-wait", type=int, default=25,
                    help="Wait for Gemini editor to load (seconds)")
     p.add_argument("--retries", type=int, default=3,
