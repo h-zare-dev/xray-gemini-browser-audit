@@ -198,6 +198,7 @@ DEFAULTS = {
     "XRAY_STARTUP_TIMEOUT": 20,
     "CHROME_PATH": "",
     "CLOSE_BROWSER": True,
+    "LOGIN_DIRECT": True,
 }
 
 
@@ -228,6 +229,11 @@ def settings_from_env(args, env):
             except (ValueError, TypeError):
                 raise ValueError(f"{key} must be a valid {cast.__name__}")
         setattr(args, attribute, value)
+    if args.login_direct is None:
+        value = str(env.get("LOGIN_DIRECT", "true")).strip().lower()
+        if value not in ("true", "false", "1", "0", "yes", "no", "on", "off"):
+            raise ValueError("LOGIN_DIRECT must be true or false")
+        args.login_direct = value in ("true", "1", "yes", "on")
     if args.close_browser is None:
         val = str(env.get("CLOSE_BROWSER", "true")).strip().lower()
         if val not in ("true", "false", "1", "0", "yes", "no", "on", "off"):
@@ -264,9 +270,13 @@ def main():
     p.add_argument("--xray-image", default=None)
     p.add_argument("--xray-startup-timeout", type=int, default=None)
     p.add_argument("--chrome-path", default=None)
+    p.add_argument("--login-direct", dest="login_direct", action="store_true",
+                   help="Open Chrome without Xray for Google sign-in before testing")
+    p.add_argument("--skip-direct-login", dest="login_direct", action="store_false",
+                   help="Skip direct login phase, use an existing profile")
     p.add_argument("--close-browser", dest="close_browser", action="store_true")
     p.add_argument("--keep-browser", dest="close_browser", action="store_false")
-    p.set_defaults(close_browser=None)
+    p.set_defaults(close_browser=None, login_direct=None)
     args = p.parse_args()
     env = read_env(args.env)
     try:
@@ -311,12 +321,50 @@ def main():
     if subprocess.run(["docker", "image", "inspect", args.xray_image], capture_output=True).returncode:
         subprocess.run(["docker", "pull", args.xray_image], check=True)
 
-    # Bootstrap through first source; require user to verify Gemini before tests.
+    # Step 1: normal Chrome without Xray so Google sign-in uses local internet.
+    # Step 2: stop that Chrome completely, then reopen the SAME profile with SOCKS.
     browser_process = None
+    login_process = None
     rows = []
     cdp_port = free_port()
     first = targets[0]
     try:
+        if args.login_direct:
+            banner("STEP 1 / 2: GOOGLE LOGIN - NO XRAY PROXY", [
+                "Chrome opens DIRECTLY through your normal internet connection.",
+                "Sign in to Google/Gemini in that Chrome window.",
+                "Verify your account avatar is visible.",
+                "Return to this terminal and press ENTER.",
+                "This login Chrome will then close before proxy tests start.",
+            ], RED)
+            login_cmd = [
+                chrome, f"--user-data-dir={profile}", "--no-first-run",
+                "--no-proxy-server", "--new-window",
+                "https://gemini.google.com/app",
+            ]
+            login_process = subprocess.Popen(
+                login_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+            try:
+                input("\n>>> PRESS ENTER AFTER LOGIN IS COMPLETE <<<\n")
+            finally:
+                if login_process.poll() is None:
+                    login_process.terminate()
+                    try:
+                        login_process.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        login_process.kill()
+                        login_process.wait(timeout=5)
+                login_process = None
+            # Allow Chrome to flush cookies and release its profile lock.
+            time.sleep(2)
+
+        banner("STEP 2 / 2: GEMINI TESTS VIA XRAY", [
+            "The login window is closed. Starting a new test Chrome via Xray.",
+            "You do NOT need to enter Google credentials through the proxy.",
+            "If Google signs you out after IP change, results may be LOGIN_REQUIRED.",
+            "Leave the test browser open while the tests are running.",
+        ], CYAN)
         with Xray(outbound_from_url(first.uri), first.port, args.socks_port,
                   image=args.xray_image, startup_timeout=args.xray_startup_timeout):
             command = [
@@ -326,19 +374,13 @@ def main():
                 f"--proxy-server=socks5://127.0.0.1:{args.socks_port}",
                 "--disable-quic", "--new-window", "https://gemini.google.com/app"
             ]
-            browser_process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            browser_process = subprocess.Popen(
+                command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
             if not wait_cdp(browser_process, cdp_port):
-                raise RuntimeError("Cannot attach to Chrome. Close other Chrome windows using this test profile.")
-
-            banner("ACTION REQUIRED: SIGN IN TO GEMINI", [
-                "1. Go to the Chrome window that just opened.",
-                "2. Sign in to your Google account MANUALLY.",
-                "3. Send a test message and verify Gemini answers.",
-                "4. KEEP CHROME OPEN, come back to this terminal.",
-                "5. Press ENTER below to start the tests.",
-            ], RED)
-            input("\n" + (GREEN if sys.stdout.isatty() else "") +
-                  ">>> AFTER YOU HAVE SIGNED IN, PRESS ENTER TO START <<<" + RESET + "\n")
+                raise RuntimeError(
+                    "Cannot attach to test Chrome; close Chrome instances using this profile."
+                )
 
         with sync_playwright() as playwright:
             browser = playwright.chromium.connect_over_cdp(f"http://127.0.0.1:{cdp_port}")
@@ -399,6 +441,13 @@ def main():
     except KeyboardInterrupt:
         print("\nInterrupted, saving partial results.", file=sys.stderr)
     finally:
+        if login_process is not None and login_process.poll() is None:
+            login_process.terminate()
+            try:
+                login_process.wait(timeout=8)
+            except subprocess.TimeoutExpired:
+                login_process.kill()
+                login_process.wait(timeout=5)
         path = output / "results.csv"
         with path.open("w", newline="", encoding="utf8") as f:
             w = csv.DictWriter(f, fieldnames=["timestamp_utc", "index", "name", "port", "status", "detail", "attempts", "attempt_results"])
