@@ -188,7 +188,7 @@ python src/session_audit.py
 | `CLOSE_BROWSER` | `true` | Close dedicated test Chrome after completion or Ctrl+C |
 | `CHROME_PATH` | empty | Optional Google Chrome executable override |
 | `PROFILE_DIR` | `.local/browser-profile` | Local Chrome user profile |
-| `OUTPUT_DIR` | `reports/session` | CSV and screenshots |
+| `OUTPUT_DIR` | `reports/session` | Parent folder for timestamped run subfolders |
 | `SOCKS_PORT` | `18998` | Local SOCKS port |
 | `XRAY_IMAGE` | `ghcr.io/xtls/xray-core:26.3.27` | Official Docker image |
 | `XRAY_STARTUP_TIMEOUT` | `20` | Seconds to wait for local Xray startup |
@@ -201,6 +201,28 @@ The audit only closes its **dedicated** Chrome process. It never touches the
 ordinary Chrome profile. Existing Chrome login/session data persists under
 `.local/browser-profile` unless you delete it. Neither profile nor `.env`
 is committed to Git.
+
+### Separate timestamped report directory for each run
+
+Each invocation creates a new directory under `OUTPUT_DIR`, using the **local
+date and time at start**, e.g.:
+
+```text
+reports/session/
+├── 2026-11-12_21-30-45/
+│   ├── results.csv
+│   ├── 0001_23001_try1.png
+│   └── 0002_23007_try1.png
+└── 2026-11-12_22-10-03/
+    ├── results.csv
+    └── 0001_23007_try1.png
+```
+
+If two runs start in the same second, a suffix such as `_01` is added.
+Previous reports are **never overwritten**. This works with both VLESS and
+subscription modes. `OUTPUT_DIR=reports/session` still controls the parent
+folder; the timestamp subfolder is created automatically. Partial results
+from interrupted runs go to their own timestamped directory too.
 
 ### Terminal colors, pacing and retries
 
@@ -226,8 +248,8 @@ or green result only describes **Gemini Web**, never guarantees Gemini Android
 works with that exit IP. Browser transport may reuse state across proxies;
 do not treat one run as proof for changing production balancers.
 
-After that, the report is `reports/session/results.csv`. Screenshots are also
-stored locally. The browser is launched through Xray Docker, but there is no
+After that, the report is `reports/session/YYYY-MM-DD_HH-MM-SS/results.csv`. Screenshots are also
+stored in the same run folder. The browser is launched through Xray Docker, but there is no
 Xray installation on the host.
 
 **Known limitation:** An authenticated session may not persist when Google
