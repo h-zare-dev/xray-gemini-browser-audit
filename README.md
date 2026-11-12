@@ -118,6 +118,21 @@ The direct-login Chrome is always closed before tests, regardless of
 `CLOSE_BROWSER`. The test Chrome is closed after tests when
 `CLOSE_BROWSER=true`.
 
+### Two distinct time budgets
+
+The script treats the Gemini test as two separate phases:
+
+- **Before sending**: `READY_WAIT=15` seconds is the *combined* maximum for loading the page and finding its prompt textbox. A clear country-block message is recognized immediately. Without a textbox after 15 seconds, no prompt is sent, and the outcome is `NO_EDITOR` (yellow).
+- **After sending**: `ANSWER_WAIT=70` seconds starts **only after** successfully submitting the prompt. Gemini Pro may need 30+ seconds; increase this independently as needed.
+
+`TIMEOUT` is the upper limit for page navigation, but in the first phase
+navigation is also capped by remaining `READY_WAIT`; setting `TIMEOUT=50`
+does **not** make a missing textbox wait 50 seconds.
+
+A blocked country landing page is explicit evidence of a Gemini **Web**
+restriction; a missing textbox alone is *not* sufficient evidence of a
+country block. Retries remain configurable.
+
 ### Response detection behavior
 
 The auditor now waits for a stable **assistant response** inside the `model-response`
@@ -162,7 +177,7 @@ python src/session_audit.py
 | `RETRIES` | `3` | Attempts for uncertain/error results (minimum 1) |
 | `ANSWER_WAIT` | `70` | Seconds waiting for Gemini reply after submitting |
 | `TIMEOUT` | `55` | Page navigation timeout in seconds |
-| `READY_WAIT` | `25` | Seconds waiting for prompt editor to load |
+| `READY_WAIT` | `15` | Total time budget for navigation + finding the prompt editor |
 | `RESPONSE_STABLE` | `4` | Seconds model response stays stable before marking OK |
 | `RETRY_DELAY` | `7` | Seconds between retry attempts |
 | `PAUSE` | `8` | Seconds between ports |
@@ -192,7 +207,7 @@ The current auditor uses clear colored status lines:
 - **YELLOW / CHECK**: Login challenge, possible reply, missing editor or inconsistent outcomes. **Do not remove this server from the balancer.**
 - **RED / BLOCKED**: A country restriction explicitly appeared on **all three attempts**. A repeated network failure is also marked red, but still needs review before permanent removal.
 
-Default behavior: `--ready-wait 25` seconds for page/editor readiness,
+Default behavior: `--ready-wait 15` seconds **total for page navigation and editor readiness**,
 `--timeout 55` seconds for navigation, `--answer-wait 70` seconds for a
 generated answer, `--retries 3`, `--retry-delay 7` seconds, and
 `--pause 8` seconds between ports. Any uncertain/error result is retried
