@@ -233,8 +233,8 @@ def settings_from_env(args, env):
         if val not in ("true", "false", "1", "0", "yes", "no", "on", "off"):
             raise ValueError("CLOSE_BROWSER must be true or false")
         args.close_browser = val in ("true", "1", "yes", "on")
-    if args.retries < 3:
-        raise ValueError("RETRIES must be at least 3")
+    if args.retries < 1:
+        raise ValueError("RETRIES must be at least 1")
     for key in ("timeout", "answer_wait", "ready_wait", "xray_startup_timeout"):
         if getattr(args, key) < 1:
             raise ValueError(f"{key.upper()} must be at least 1")
