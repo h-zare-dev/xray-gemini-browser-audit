@@ -144,7 +144,7 @@ python src/session_audit.py
 | `VLESS_URL` | blank | Private single VLESS URL |
 | `PORTS` | 61 test ports | Comma-separated ports and inclusive ranges |
 | `SUBSCRIPTION_URL` | blank | Private subscription address |
-| `RETRIES` | `3` | Attempts for uncertain/error results (minimum 3) |
+| `RETRIES` | `3` | Attempts for uncertain/error results (minimum 1) |
 | `ANSWER_WAIT` | `70` | Seconds waiting for Gemini reply after submitting |
 | `TIMEOUT` | `55` | Page navigation timeout in seconds |
 | `READY_WAIT` | `25` | Seconds waiting for prompt editor to load |
@@ -180,7 +180,7 @@ Default behavior: `--ready-wait 25` seconds for page/editor readiness,
 `--timeout 55` seconds for navigation, `--answer-wait 70` seconds for a
 generated answer, `--retries 3`, `--retry-delay 7` seconds, and
 `--pause 8` seconds between ports. Any uncertain/error result is retried
-three times; successful `WEB_OK` stops early. Screenshots are saved per
+up to the configured number of times; successful `WEB_OK` stops early. Screenshots are saved per
 attempt as `PORT_tryN.png`. More deliberate testing:
 
 ```bash
