@@ -1,0 +1,11 @@
+.local/
+reports/
+.env
+.env.*
+vless.txt
+*.secret
+*.key
+__pycache__/
+.pytest_cache/
+.venv/
+*.pyc
