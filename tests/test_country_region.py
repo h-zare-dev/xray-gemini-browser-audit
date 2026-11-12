@@ -30,7 +30,7 @@ class CountryBlockTests(unittest.TestCase):
 
     def test_linebreaks_in_country_block(self):
         self.assertTrue(REGION.search(
-            "Gemini isn’t currently supported\\nin your country. Stay tuned!"
+            "Gemini isn’t currently supported\nin your country. Stay tuned!"
         ))
 
     def test_missing_textbox_not_region_block(self):
