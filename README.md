@@ -111,8 +111,8 @@ The subscription must supply **one proxy URI per line**, either as plaintext or 
 2. **Switch to testing:** the login Chrome is closed. A new Chrome instance reuses that profile and connects through the local Docker Xray SOCKS5 proxy.
 3. **Check each destination:** load Gemini Web and look for an explicit country-block message or the message textbox. The **entire pre-submit phase** is limited by `READY_WAIT`.
 4. **Send and await:** only if the textbox exists, send a unique marker prompt. Wait independently for Gemini's generated reply, subject to `ANSWER_WAIT` and `RESPONSE_STABLE`.
-5. **Retry ambiguous failures:** successful verified model replies and explicit country-block pages stop that port immediately. Other uncertain/failed results can be retried according to `RETRIES`.
-6. **Save and close:** screenshots and CSV go into a new run folder. By default, the dedicated test Chrome closes automatically; the local login profile is preserved.
+5. **Confirm submission:** after pressing Enter, verify that the prompt has left the editor or appears as a user message. If not, try the enabled Send button once. Unsent prompts are classified as `SUBMIT_FAILED` rather than waiting for an assistant response.\n6. **Retry ambiguous failures:** successful verified model replies and explicit country-block pages stop that port immediately. Other uncertain/failed results can be retried according to `RETRIES`.
+7. **Save and close:** screenshots and CSV go into a new run folder. By default, the dedicated test Chrome closes automatically; the local login profile is preserved.
 
 **Note on isolation:** the proxy's Xray container changes between destinations while Chrome stays open. Browser connections, DNS caches, cookies and Google account state may persist across ports; treat results as a **screening aid**, not proof of the exact exit IP used by every request.
 
@@ -177,7 +177,7 @@ The CSV includes `timestamp_utc`, `index`, `name`, `port`, `status`, `detail`, `
 | 🟢 `OK` | `WEB_OK` | A matching marker was found in the assistant response and became stable |
 | 🔴 `BLOCKED` | `REGION_BLOCKED` | Gemini Web explicitly showed an unsupported-country message; no retry |
 | 🔴 `NETWORK ERROR` | `CONNECTION_FAILED_CONFIRMED` | Repeated eligible network failures (requires 3 attempts) |
-| 🟡 `CHECK` | `NO_EDITOR` | No prompt textbox appeared before `READY_WAIT` expired |
+| 🟡 `CHECK` | `NO_EDITOR` | No prompt textbox appeared before `READY_WAIT` expired |\n| 🟡 `CHECK` | `SUBMIT_FAILED` | Text was entered but sending was not confirmed (Enter and Send-button fallback) |
 | 🟡 `CHECK` | `LOGIN_REQUIRED` | Google sign-in or identity challenge |
 | 🟡 `CHECK` | `RESPONSE_CANDIDATE` | Marker may have appeared, but model response was not verified |
 | 🟡 `CHECK` | `INCONCLUSIVE` | No reliable conclusion or inconsistent attempts |
@@ -200,7 +200,7 @@ find reports/session -name results.csv -print
 | `NO_EDITOR` / `CHECK` | Check screenshots, login state, load speed and `READY_WAIT`; do not assume the route is blocked |
 | `ERR_NETWORK_CHANGED` | May occur when Xray's backend changes; retry and inspect the screenshot |
 | Timeout before the textbox appears | Increase `READY_WAIT` only if page loading is slow; `ANSWER_WAIT` does not apply yet |
-| Gemini takes long to reply | Increase `ANSWER_WAIT` for slow models, e.g. 90–120 |
+| Gemini takes long to reply | Increase `ANSWER_WAIT` for slow models, e.g. 90–120 |\n| Prompt remains in the editor, blue Send arrow visible | The script verifies Enter submission and falls back once to the Send button; check a `SUBMIT_FAILED` screenshot if it remains stuck |
 | Chrome refuses to launch or the profile is locked | Close old test Chrome processes using the dedicated `PROFILE_DIR`; do not remove your personal Chrome data |
 | Local SOCKS unavailable | Check `docker info`, the Xray image, port `SOCKS_PORT`, and Docker permission |
 | Subscription yields zero nodes | Verify that it is a plaintext/base64 URI list and contains supported VLESS TCP/RAW links |
