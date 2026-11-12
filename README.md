@@ -18,13 +18,28 @@ python -m playwright install chromium
 docker pull ghcr.io/xtls/xray-core:26.3.27
 ```
 
-## Log in once (visible browser)
+## Log in using ordinary Chrome (not Playwright)
+
+Google may refuse sign-in inside an automated browser with the message **"This browser or app may not be secure"**. Google explicitly lists automation-controlled browsers as a possible cause. This is not a WireGuard failure.
+
+Install the official Google Chrome browser on the Linux laptop. Then run:
 
 ```bash
-python src/audit.py --login --login-port 23007
+python src/audit.py --login
+# Equivalent: python src/login.py
 ```
 
-Paste a working VLESS URL **when prompted**, then manually sign into Gemini in the Chromium window. Cookies are stored only in `.local/browser-profile/` (ignored by Git). Use a separate test account if possible; Google may request reauthentication after IP switches.
+This opens **normal Chrome, without Playwright, without proxy, and without Docker**, with a fresh local profile at `.local/browser-profile`. Sign into `https://gemini.google.com/app` manually, then close this Chrome window completely.
+
+Next, run the test using the same local profile and official Chrome executable:
+
+```bash
+python src/audit.py --ports 23001,23004,23007 --headed
+```
+
+The audit asks for your VLESS URI through hidden input, then runs official Xray inside Docker to proxy only the test Chrome. A country/account recheck may happen when the public IP changes; **Google may still deny automated sessions or request reauthentication**. We will not disable security safeguards or guarantee sign-in.
+
+Do not run normal Chrome and audit simultaneously with the same dedicated profile. Never publish, upload, or copy the profile. Google session cookies can grant account access.
 
 ## Compare with known Android results
 
