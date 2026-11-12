@@ -41,20 +41,77 @@ The audit asks for your VLESS URI through hidden input, then runs official Xray 
 
 Do not run normal Chrome and audit simultaneously with the same dedicated profile. Never publish, upload, or copy the profile. Google session cookies can grant account access.
 
-## Recommended: single native Chrome window (experimental)
+## Run with `.env` (recommended)
 
-This mode keeps **one standard Google Chrome window** open while testing three ports. It uses CDP to inspect the page but does not launch a new Playwright-controlled Chrome for every port. You sign in manually inside this window before the tests start. Xray itself still runs in temporary Docker containers.
+The project supports two modes and does not need a CSV input. Sensitive input
+stays on your laptop in `.env`, excluded from Git by `.gitignore`.
 
 ```bash
 git pull origin main
-python src/session_audit.py --ports 23001,23004,23007
+cp .env.example .env
+chmod 600 .env
+nano .env
 ```
 
-Paste the VLESS URL when prompted (hidden). Chrome opens through the first port, then sign in manually and **verify Gemini can actually answer**. Leave Chrome open and press Enter in the terminal to start testing all selected ports.
+**Single VLESS URL, many ports** (example):
 
-Do not run `--login` or another Chrome process using this same dedicated profile at the same time. Google may still challenge the login after the exit IP changes. This tool labels guest mode as `LOGIN_REQUIRED` and ambiguous responses as `INCONCLUSIVE`, never "Gemini working".
+```dotenv
+MODE=vless
+VLESS_URL=vless://YOUR-OWN-CONNECTION-URL
+PORTS=21001-21009,22001-22010,23001-23008,24001-24009,25001-25025
+```
 
-*Known limitation:* Chrome connections/DNS/session state can persist across port switches. Treat results as preliminary until verified by fresh requests and screenshots. Chrome's security systems may block automation or reauthentication; we do not bypass them.
+Run:
+
+```bash
+python src/session_audit.py
+```
+
+Or override the ports for a quick test:
+
+```bash
+python src/session_audit.py --ports 23001,23004,23007
+python src/session_audit.py --ports 21001-21009,23001-23008,25001-25025
+```
+
+Both comma-separated ports and inclusive hyphen ranges work. Only specified
+ports will be tested. There is no need for `data/ports.csv`.
+
+**Subscription URL, each entry's own host and port**:
+
+```dotenv
+MODE=subscription
+SUBSCRIPTION_URL=https://your-provider.example/subscription/TOKEN
+```
+
+Then:
+
+```bash
+python src/session_audit.py
+```
+
+Supported: plaintext VLESS links (one per line) or a base64-encoded plaintext
+list. Unsupported protocols (VMess, Trojan, Shadowsocks), Clash YAML/JSON, and
+VLESS transports beyond TCP/RAW are **not tested**; skipped formats appear in
+the terminal. For subscription mode, the program tests each link's original
+server and port, **not** the `PORTS` ranges.
+
+A large **red instruction panel** appears when Chrome opens:
+
+1. Sign in to Google in that Chrome window.
+2. Send a test message and confirm Gemini replied.
+3. **Leave Chrome open**.
+4. Return to the terminal and press **Enter**.
+
+After that, the report is `reports/session/results.csv`. Screenshots are also
+stored locally. The browser is launched through Xray Docker, but there is no
+Xray installation on the host.
+
+**Known limitation:** An authenticated session may not persist when Google
+requires verification after IP changes. Reusing Chrome while restarting Xray
+may also retain existing network connections. Treat `RESPONSE_CANDIDATE`
+as **unverified**, not a guarantee of successful Gemini use on Android.
+Do not remove balancer members on this evidence alone.
 
 ## Compare with known Android results
 
