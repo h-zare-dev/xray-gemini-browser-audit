@@ -122,14 +122,17 @@ The direct-login Chrome is always closed before tests, regardless of
 
 The script treats the Gemini test as two separate phases:
 
-- **Before sending**: `READY_WAIT=15` seconds is the *combined* maximum for loading the page and finding its prompt textbox. A clear country-block message is recognized immediately. Without a textbox after 15 seconds, no prompt is sent, and the outcome is `NO_EDITOR` (yellow).
+- **Before sending**: `READY_WAIT=15` seconds is the *combined* maximum for loading the page and finding its prompt textbox. A clear country-block message is recognized immediately and **stops the current port without retrying**. Without a textbox after 15 seconds, no prompt is sent, and the outcome is `NO_EDITOR` (yellow).
 - **After sending**: `ANSWER_WAIT=70` seconds starts **only after** successfully submitting the prompt. Gemini Pro may need 30+ seconds; increase this independently as needed.
 
 `TIMEOUT` is the upper limit for page navigation, but in the first phase
 navigation is also capped by remaining `READY_WAIT`; setting `TIMEOUT=50`
 does **not** make a missing textbox wait 50 seconds.
 
-A blocked country landing page is explicit evidence of a Gemini **Web**
+An explicit blocked-country landing page is reported as **red BLOCKED**
+with **tries=1**, and the script moves straight to the next port.
+This records Gemini **Web** behavior for that request; it does not prove
+Android support or absence of transient regional anomalies. A blocked country landing page is explicit evidence of a Gemini **Web**
 restriction; a missing textbox alone is *not* sufficient evidence of a
 country block. Retries remain configurable.
 
@@ -205,7 +208,7 @@ The current auditor uses clear colored status lines:
 
 - **GREEN / OK**: Generated marker found inside Gemini's response element (`WEB_OK`).
 - **YELLOW / CHECK**: Login challenge, possible reply, missing editor or inconsistent outcomes. **Do not remove this server from the balancer.**
-- **RED / BLOCKED**: A country restriction explicitly appeared on **all three attempts**. A repeated network failure is also marked red, but still needs review before permanent removal.
+- **RED / BLOCKED**: Gemini Web explicitly displayed an unsupported-country message; stop immediately, no repeat required. A repeated network failure is also red, but still needs review before permanent removal.
 
 Default behavior: `--ready-wait 15` seconds **total for page navigation and editor readiness**,
 `--timeout 55` seconds for navigation, `--answer-wait 70` seconds for a
