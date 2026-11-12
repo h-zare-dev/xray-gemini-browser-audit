@@ -191,6 +191,16 @@ ls -lt reports/session/
 find reports/session -name results.csv -print
 ```
 
+### Running without stealing desktop focus
+
+The automated test reuses **one existing Chrome tab** across ports and retries.
+It does not open or foreground a new tab for every target, so your active
+window on another monitor should remain focused while tests run. The initial
+Chrome launch for manual sign-in (`LOGIN_DIRECT=true`) and the launch of the
+proxied Chrome may **still focus a window once**, depending on your window
+manager (including Hyprland). This is different from the repeated focus
+stealing that happened on every new tab.
+
 ## Troubleshooting
 
 | Symptom | What to check |
