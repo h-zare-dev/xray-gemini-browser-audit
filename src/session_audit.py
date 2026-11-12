@@ -507,8 +507,10 @@ def main():
             context = browser.contexts[0]
             page = next((q for q in context.pages if "gemini.google.com" in q.url), None)
             if page is None:
-                page = context.new_page()
-            page.bring_to_front()
+                # Reuse Chrome's existing startup tab; do not create a new
+                # foreground tab for each test.
+                page = context.pages[0] if context.pages else context.new_page()
+            # Never call bring_to_front(): users may be working on another monitor.
             for index, target in enumerate(targets, 1):
                 label = f"{index}_{target.port}"
                 attempts = []
@@ -517,22 +519,20 @@ def main():
                     try:
                         with Xray(outbound_from_url(target.uri), target.port, args.socks_port,
                                   image=args.xray_image, startup_timeout=args.xray_startup_timeout):
-                            # A fresh tab prevents stale document state between
-                            # retries; browser profile/session remain the same.
-                            test_page = context.new_page()
+                            # Reuse the existing tab for every port/attempt:
+                            # context.new_page() can foreground Chrome and steal
+                            # focus from apps on other monitors (e.g. Hyprland).
+                            # check_gemini() always navigates to Gemini afresh.
+                            attempt_status, attempt_detail = check_gemini(
+                                page, args, f"{label}_{attempt}"
+                            )
                             try:
-                                attempt_status, attempt_detail = check_gemini(
-                                    test_page, args, f"{label}_{attempt}"
+                                page.screenshot(
+                                    path=str(output / f"{index:04d}_{target.port}_try{attempt}.png"),
+                                    timeout=8000
                                 )
-                                try:
-                                    test_page.screenshot(
-                                        path=str(output / f"{index:04d}_{target.port}_try{attempt}.png"),
-                                        timeout=8000
-                                    )
-                                except Exception:
-                                    pass
-                            finally:
-                                test_page.close()
+                            except Exception:
+                                pass
                     except Exception as exc:
                         msg = str(exc)
                         attempt_status = "RETRYABLE_NETWORK" if (
