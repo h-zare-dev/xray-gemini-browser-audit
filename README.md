@@ -1,270 +1,228 @@
 # Xray Gemini Browser Audit
 
-**Version: 1.0.0** · Python · Google Chrome · Playwright (CDP) · official Xray Core Docker
+![Version](https://img.shields.io/badge/version-v1.0.0-blue)
+![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
+![Docker](https://img.shields.io/badge/Xray-Docker-2496ED?logo=docker&logoColor=white)
+![Status](https://img.shields.io/badge/status-browser--audit-orange)
 
-A locally run CLI tool for **testing Gemini Web access through VLESS/Xray connections**. Audit one VLESS connection over explicit destination-port ranges, or load supported VLESS entries from a subscription URL. Each run produces its own timestamped CSV report and screenshots.
+**Test Gemini Web access through VLESS/Xray exit routes, compare multiple ports or subscription nodes, and save reproducible local reports.**
 
-> **Scope:** This tests whether **Gemini Web** can load, accept a prompt and produce a recognizable reply in a Chrome session. It **does not** prove Gemini Android availability, the API's regional availability, or that a given WireGuard exit IP was used. Never automatically remove production balancer members based on this output alone.
+Xray Gemini Browser Audit is a Python command-line utility for Linux. It runs the official Xray Core container as a local SOCKS5 gateway, controls a dedicated **Google Chrome** test profile through Playwright's Chrome DevTools Protocol (CDP), sends a distinctive test prompt to Gemini Web, and classifies the browser-visible outcome.
+
+> **Scope:** This tests **Gemini Web**, not Gemini Android. A browser `OK` does not prove that Android will work with the same exit IP. This project does not modify Xray servers, PasarGuard settings, WireGuard peers or production balancers.
+
+**Release baseline:** `v1.0.0` — see [CHANGELOG.md](CHANGELOG.md) and [VERSION](VERSION). This is the initial documented version, **not a claim of exhaustive end-to-end certification**.
 
 ## Features
 
-- **Two input modes:** one VLESS URI across comma-separated ports and inclusive port ranges; or individual VLESS URIs from a plaintext / Base64 subscription.
-- **Private local configuration:** `.env` contains sensitive URLs; it and the browser profile are Git-ignored.
-- **Two-stage browser flow:** manual Google login in **ordinary unproxied Chrome**, then a separate Chrome process with Xray SOCKS for auditing.
-- **Faster country-block detection:** explicit regional restriction is marked `BLOCKED` immediately, without waiting for a missing message box or retrying that same attempt.
-- **Separate timers:** the pre-submit deadline (`READY_WAIT`) and reply deadline (`ANSWER_WAIT`) apply to different stages.
-- **Conservative results:** confirmed model reply = `OK`; unresolved prompts, sign-in challenges and loading failures are distinguished. Retry counts are configurable.
-- **Per-run artifacts:** a new date-and-time folder for each invocation, including CSV and screenshots of each attempt.
-- **Colored terminal output:** green for verified Web reply, yellow for uncertain outcomes, red for explicit country blocks or consistently failed network attempts.
-- **Automatic test Chrome cleanup** when `CLOSE_BROWSER=true`.
+- **VLESS port mode:** take one private VLESS URL and check individual ports or inclusive ranges such as `21001-21009,23001,23004,25001-25025`.
+- **Subscription mode:** download a plaintext or base64-encoded list of proxy URIs and test every *supported* VLESS entry using its own host and port.
+- **Two-step login:** optionally sign in with ordinary Google Chrome using a **direct, unproxied connection**, then reopen the same local profile through Xray to conduct checks.
+- **Two separate time budgets:** fast country-block/editor checks *before* submitting; longer model-response wait *after* submitting.
+- **Evidence-based results:** detect explicit country restrictions, verified model responses, transient failures, login challenges and ambiguous states.
+- **Retries and readable logs:** configurable retry count and delays, plus green/yellow/red terminal messages.
+- **Isolated reports:** a new timestamped directory for each run, with CSV and per-attempt screenshots.
+- **Secret hygiene:** credentials stay in your local `.env` and Chrome profile, both ignored by Git.
+- **Ephemeral Xray:** use a Docker image; no Xray installation required on the Linux host.
 
 ## Requirements
 
-- Linux desktop (the interactive browser workflow needs a GUI and a usable Chrome display; a headless remote server is **not** a drop-in replacement).
-- Python **3.10+** (Python 3.12 is used by CI).
-- **Google Chrome** (official browser executable `google-chrome` or `google-chrome-stable`).
-- Docker Engine available to the current user; Docker must be running.
-- Internet access to download dependencies and the Xray Core image.
-- A working **VLESS TCP/RAW** link or a supported subscription; credentials for a Google account if you want an authenticated Web check.
+- Linux computer with **Python 3.10+**
+- Docker daemon working for your user (`docker info` should succeed)
+- Official **Google Chrome** installed (`google-chrome-stable` or `google-chrome`)
+- Internet access to Google and a working VLESS server
+- A compatible VLESS URL or subscription
+- Desktop session for the initial manual Chrome sign-in
 
-The tool launches official `ghcr.io/xtls/xray-core:26.3.27` in short-lived Docker containers. It does **not** change an existing PasarGuard or production Xray installation.
+The code is not a headless Google login bypass. Google may demand verification or refuse a session after the public IP changes. Chrome is separate from your everyday browsing profile.
 
-### 1. Install
+## Quick start
 
 ```bash
 git clone https://github.com/h-zare-dev/xray-gemini-browser-audit.git
 cd xray-gemini-browser-audit
+
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -r requirements.txt
+pip install -r requirements.txt
 
-# Optional: browser binaries used by the older Playwright path;
-# session_audit.py uses the installed Google Chrome instead.
-python -m playwright install chromium
-
+# Verify installed dependencies
+google-chrome-stable --version  # or: google-chrome --version
 docker info
 docker pull ghcr.io/xtls/xray-core:26.3.27
-```
 
-If `docker info` fails, start Docker and ensure the current user can access its socket; follow your distribution's Docker setup guidance. Docker socket access typically grants elevated host privileges.
-
-### 2. Set up private `.env`
-
-```bash
-cp -n .env.example .env
+# Initialize private settings once
+cp .env.example .env
 chmod 600 .env
 nano .env
 ```
 
-**Do not overwrite an existing `.env` with `.env.example`** — it contains your private configuration. Paste credentials only into the local file, not a GitHub issue or commit.
+**Never overwrite your existing private `.env` when upgrading.** If your `.env` already exists, edit it rather than copying the example again. The script uses installed Google Chrome; `python -m playwright install chromium` is **not necessary** for the recommended `session_audit.py` workflow.
 
-#### Mode A — one VLESS link over ports
+### Mode A: one VLESS URL across ports
+
+Edit `.env`:
 
 ```dotenv
 MODE=vless
-VLESS_URL=vless://YOUR-OWN-VLESS-URI
+VLESS_URL=vless://YOUR-OWN-PRIVATE-URL
 PORTS=21001-21009,22001-22010,23001-23008,24001-24009,25001-25025
-SUBSCRIPTION_URL=
 ```
 
-The script preserves the VLESS host, UUID, supported transport/security and encryption parameters, but substitutes each requested **destination port**. You can include individual ports and ranges, e.g. `23001,23004,23007-23008`. Ranges include both endpoints; duplicates are removed.
-
-If the URI has a transport other than TCP/RAW, the current parser will not be able to test it.
-
-#### Mode B — subscription URL
-
-```dotenv
-MODE=subscription
-VLESS_URL=
-SUBSCRIPTION_URL=https://your-provider.example/your-private-subscription
-```
-
-The program downloads a plaintext URI list (one link per line) or Base64-encoded URI list and tests supported **VLESS entries at their own host and port**. The `PORTS` value is **ignored** in subscription mode. Entries of other protocols are **reported as skipped**, not silently tested. Clash YAML/JSON and VMess/Trojan/Shadowsocks are not supported; neither are VLESS XHTTP/WebSocket/gRPC transports. For subscriptions that are not in the supported format, convert them to a compatible plaintext link list first.
-
-A subscription may contain a secret token. Keep the URL in local `.env`, never in the repository.
-
-### 3. Run
-
-For everything specified by `.env`:
+Run all ports configured in `.env`:
 
 ```bash
 python src/session_audit.py
 ```
 
-For selected VLESS ports **without editing `.env`**:
+Or select only a few for a quick comparison:
 
 ```bash
 python src/session_audit.py --ports 23001,23004,23007
-python src/session_audit.py --ports 21001-21009,23001-23008
+python src/session_audit.py --ports 21001-21009,24001,25001-25005
 ```
 
-For a different private config file:
+The original connection host, UUID and encryption options are preserved; the **destination port** is varied. Ports are inclusive, comma-separated and deduplicated.
 
-```bash
-python src/session_audit.py --env .env.local --ports 23007
-```
+### Mode B: subscription URL
 
-**Note:** `--ports` only has an effect in `MODE=vless`; subscription mode tests each supported link with its own port.
-
-#### How manual login works
-
-1. With `LOGIN_DIRECT=true` (the default), Chrome opens **without the Xray proxy** using a dedicated local profile.
-2. Log into Google yourself. Check the signed-in avatar, then press **Enter** in the terminal.
-3. The script closes that login Chrome, waits briefly for profile files to be released, and launches **test Chrome through local Xray SOCKS** with the same profile.
-4. Tests run automatically. With `CLOSE_BROWSER=true`, the script closes its dedicated test Chrome when finished.
-
-**Google can invalidate or challenge a session after an IP/country change.** Login success on the direct connection does not guarantee it remains authenticated when testing other exits. Do not attempt to bypass Google's security protections.
-
-If you already have a valid local profile and want to skip the direct-login window, set `LOGIN_DIRECT=false` or invoke `--skip-direct-login`. Do not run multiple instances against the same Chrome profile at once.
-
-### 4. Configure all runtime settings
-
-The local `.env` is the default configuration source. Command-line flags override its values for one invocation, and built-in defaults apply when an entry is missing.
-
-| `.env` setting | Default | What it controls |
-|---|---|---|
-| `MODE` | `vless` | `vless` or `subscription` |
-| `VLESS_URL` | empty | Private VLESS URI for port-range testing |
-| `PORTS` | configured 61-port sample | Comma-separated ports and inclusive ranges |
-| `SUBSCRIPTION_URL` | empty | Private plaintext/Base64 subscription URL |
-| `RETRIES` | `3` | Maximum attempts for an uncertain/error outcome (minimum 1) |
-| `READY_WAIT` | `15` | Combined **pre-submit** budget to navigate and find an editor, in seconds |
-| `ANSWER_WAIT` | `70` | Time to wait for Gemini **after sending** a prompt, in seconds |
-| `TIMEOUT` | `55` | Navigation cap in seconds; pre-submit is still capped by `READY_WAIT` |
-| `RESPONSE_STABLE` | `4` | Seconds the detected model response must stay stable |
-| `RETRY_DELAY` | `7` | Seconds between retries on one target |
-| `PAUSE` | `8` | Seconds between different targets |
-| `LOGIN_DIRECT` | `true` | Open unproxied Chrome for initial manual login |
-| `CLOSE_BROWSER` | `true` | Close the test Chrome after the run |
-| `CHROME_PATH` | empty | Optional override for the Google Chrome executable |
-| `PROFILE_DIR` | `.local/browser-profile` | Local Chrome profile, contains Google session data |
-| `OUTPUT_DIR` | `reports/session` | Parent directory for timestamped results |
-| `SOCKS_PORT` | `18998` | Locally bound SOCKS5 listening port |
-| `XRAY_IMAGE` | `ghcr.io/xtls/xray-core:26.3.27` | Official Docker image |
-| `XRAY_STARTUP_TIMEOUT` | `20` | Seconds to wait for Xray's SOCKS listener |
-
-Example tuning for a slower Gemini Pro reply:
+Edit `.env`:
 
 ```dotenv
-RETRIES=3
-READY_WAIT=15
-ANSWER_WAIT=90
-RESPONSE_STABLE=5
-RETRY_DELAY=7
-PAUSE=8
-LOGIN_DIRECT=true
-CLOSE_BROWSER=true
+MODE=subscription
+SUBSCRIPTION_URL=https://provider.example/your-private-subscription-token
 ```
 
-Equivalent one-off overrides:
+Then:
 
 ```bash
-python src/session_audit.py --ports 23007 --retries 3 --ready-wait 15 --answer-wait 90 --response-stable 5
-python src/session_audit.py --ports 23007 --keep-browser
+python src/session_audit.py
 ```
 
-### 5. Read results
+The subscription must supply **one proxy URI per line**, either as plaintext or as a base64-encoded text list. The script tests each supported VLESS entry's **original host and port**; `PORTS` and `--ports` do not select individual entries in subscription mode.
 
-Each run creates a **unique local-time directory**, keeping historical runs separate:
+**Supported:** VLESS `tcp` / `raw` transports with `security=none`, `tls` or `reality` as represented by the project's parser. **Not supported:** Clash YAML/JSON, VMess, Trojan, Shadowsocks, VLESS WS/gRPC/XHTTP or arbitrary Xray JSON. Unsupported URI protocols and incompatible VLESS entries are reported as skipped rather than incorrectly marked as failed. Plaintext HTTP subscription URLs are technically accepted; **HTTPS is strongly recommended** to protect subscription tokens.
+
+## How a run works
+
+1. **Local login (default):** with `LOGIN_DIRECT=true`, the script opens normal Chrome with `--no-proxy-server` and its own local profile. Sign in to your Google account manually, return to the terminal, and press Enter.
+2. **Switch to testing:** the login Chrome is closed. A new Chrome instance reuses that profile and connects through the local Docker Xray SOCKS5 proxy.
+3. **Check each destination:** load Gemini Web and look for an explicit country-block message or the message textbox. The **entire pre-submit phase** is limited by `READY_WAIT`.
+4. **Send and await:** only if the textbox exists, send a unique marker prompt. Wait independently for Gemini's generated reply, subject to `ANSWER_WAIT` and `RESPONSE_STABLE`.
+5. **Retry ambiguous failures:** successful verified model replies and explicit country-block pages stop that port immediately. Other uncertain/failed results can be retried according to `RETRIES`.
+6. **Save and close:** screenshots and CSV go into a new run folder. By default, the dedicated test Chrome closes automatically; the local login profile is preserved.
+
+**Note on isolation:** the proxy's Xray container changes between destinations while Chrome stays open. Browser connections, DNS caches, cookies and Google account state may persist across ports; treat results as a **screening aid**, not proof of the exact exit IP used by every request.
+
+## Configuration reference
+
+Create your settings by copying [`.env.example`](.env.example). No secret values are included in that template.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `MODE` | `vless` | Choose `vless` or `subscription` |
+| `VLESS_URL` | empty | Private VLESS link in port mode |
+| `PORTS` | 61 example ports | Single ports and inclusive ranges in port mode |
+| `SUBSCRIPTION_URL` | empty | Subscription endpoint in subscription mode |
+| `RETRIES` | `3` | Maximum attempts for uncertain outcomes; minimum 1 |
+| `READY_WAIT` | `15` | Combined seconds for initial navigation and finding the textbox |
+| `ANSWER_WAIT` | `70` | Seconds to wait **after sending** the prompt |
+| `TIMEOUT` | `55` | General navigation cap; pre-submit stage is also capped by `READY_WAIT` |
+| `RESPONSE_STABLE` | `4` | Seconds a matching assistant response must remain stable |
+| `RETRY_DELAY` | `7` | Delay between retries, seconds |
+| `PAUSE` | `8` | Delay between target ports, seconds |
+| `LOGIN_DIRECT` | `true` | Initial Google login via normal unproxied Chrome |
+| `CLOSE_BROWSER` | `true` | Close dedicated test Chrome after completion or interruption |
+| `CHROME_PATH` | empty | Optional path to official Chrome; otherwise autodetected |
+| `PROFILE_DIR` | `.local/browser-profile` | Local dedicated Google Chrome profile |
+| `OUTPUT_DIR` | `reports/session` | Parent directory for timestamped run reports |
+| `SOCKS_PORT` | `18998` | Local Xray SOCKS5 listener |
+| `XRAY_IMAGE` | `ghcr.io/xtls/xray-core:26.3.27` | Xray Docker image |
+| `XRAY_STARTUP_TIMEOUT` | `20` | Xray startup wait, seconds |
+
+**Precedence:** an explicit CLI option overrides `.env`; `.env` overrides the built-in default. For example:
+
+```bash
+python src/session_audit.py --ports 23007 --retries 2 --ready-wait 15 --answer-wait 100 --response-stable 5
+python src/session_audit.py --skip-direct-login --ports 23007
+python src/session_audit.py --keep-browser --ports 23007
+python src/session_audit.py --env /path/to/private-config.env --output reports/custom
+python src/session_audit.py --help
+```
+
+`--skip-direct-login` skips the initial direct sign-in phase; it does not guarantee that Google will accept an existing session.
+
+## Output and status definitions
+
+Every run creates a new directory using the computer's **local start time**. Runs starting in the same second get `_01`, `_02` and so forth, rather than overwriting each other.
 
 ```text
 reports/session/
 ├── 2026-11-12_21-30-45/
 │   ├── results.csv
 │   ├── 0001_23001_try1.png
+│   ├── 0001_23001_try2.png
 │   └── 0002_23007_try1.png
 └── 2026-11-12_22-10-03/
-    └── results.csv
+    ├── results.csv
+    └── 0001_23007_try1.png
 ```
 
-If two runs start in the same second, the second gets a suffix like `_01`. Interrupted runs also save available completed rows into their own report. The script prints the exact report directory and CSV path.
+The CSV includes `timestamp_utc`, `index`, `name`, `port`, `status`, `detail`, `attempts` and `attempt_results`.
+
+| Terminal | CSV status | Interpretation |
+| --- | --- | --- |
+| 🟢 `OK` | `WEB_OK` | A matching marker was found in the assistant response and became stable |
+| 🔴 `BLOCKED` | `REGION_BLOCKED` | Gemini Web explicitly showed an unsupported-country message; no retry |
+| 🔴 `NETWORK ERROR` | `CONNECTION_FAILED_CONFIRMED` | Repeated eligible network failures (requires 3 attempts) |
+| 🟡 `CHECK` | `NO_EDITOR` | No prompt textbox appeared before `READY_WAIT` expired |
+| 🟡 `CHECK` | `LOGIN_REQUIRED` | Google sign-in or identity challenge |
+| 🟡 `CHECK` | `RESPONSE_CANDIDATE` | Marker may have appeared, but model response was not verified |
+| 🟡 `CHECK` | `INCONCLUSIVE` | No reliable conclusion or inconsistent attempts |
+
+A red country restriction is evidence for **that Gemini Web page load**, not a permanent assessment of the exit IP or proof of Android behavior. A missing editor **by itself** is never enough to label a country block.
+
+To view the newest run locally:
 
 ```bash
 ls -lt reports/session/
-# Find most recent report directory:
-latest=$(find reports/session -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)
-cat "$latest/results.csv"
+find reports/session -name results.csv -print
 ```
 
-CSV columns: `timestamp_utc`, `index`, `name`, `port`, `status`, `detail`, `attempts`, `attempt_results`.
+## Troubleshooting
 
-| Terminal | CSV status | Interpretation |
-|---|---|---|
-| 🟢 `OK` | `WEB_OK` | A stable expected marker was detected inside a Gemini assistant response. **Web-only** success. |
-| 🔴 `BLOCKED` | `REGION_BLOCKED` | An explicit unsupported-country message appeared; no extra retry needed for that visit. |
-| 🔴 `NETWORK ERROR` | `CONNECTION_FAILED_CONFIRMED` | All 3 attempts were classified as retryable network failures. |
-| 🟡 `CHECK` | `LOGIN_REQUIRED` | Google login or verification challenge. |
-| 🟡 `CHECK` | `NO_EDITOR` | No usable prompt input within `READY_WAIT`. |
-| 🟡 `CHECK` | `RESPONSE_CANDIDATE` | A possible reply appeared but did not meet strict response detection. |
-| 🟡 `CHECK` | `INCONCLUSIVE` | Mixed or incomplete evidence; do **not** label the IP definitively blocked. |
+| Symptom | What to check |
+| --- | --- |
+| Google displays “This browser or app may not be secure” | Complete sign-in using the **direct Chrome** phase; avoid automated sign-in |
+| Gemini says “isn't currently supported in your country” | The test page is region-blocked; the program should print `BLOCKED` immediately |
+| `NO_EDITOR` / `CHECK` | Check screenshots, login state, load speed and `READY_WAIT`; do not assume the route is blocked |
+| `ERR_NETWORK_CHANGED` | May occur when Xray's backend changes; retry and inspect the screenshot |
+| Timeout before the textbox appears | Increase `READY_WAIT` only if page loading is slow; `ANSWER_WAIT` does not apply yet |
+| Gemini takes long to reply | Increase `ANSWER_WAIT` for slow models, e.g. 90–120 |
+| Chrome refuses to launch or the profile is locked | Close old test Chrome processes using the dedicated `PROFILE_DIR`; do not remove your personal Chrome data |
+| Local SOCKS unavailable | Check `docker info`, the Xray image, port `SOCKS_PORT`, and Docker permission |
+| Subscription yields zero nodes | Verify that it is a plaintext/base64 URI list and contains supported VLESS TCP/RAW links |
 
-`attempt_results` captures each underlying attempt status. A green result stops retries early. An explicit regional restriction also stops retries early; other errors can be retried up to `RETRIES`.
-
-### 6. Troubleshooting
-
-**Chrome reports “This browser or app may not be secure” when signing in.** Use the normal direct-login window, not a Chrome instance launched through Playwright automation. Google may still request further verification.
-
-**The initial login page says the country is unsupported.** Make sure `LOGIN_DIRECT=true`; the initial login Chrome should start with `--no-proxy-server`. Check whether your *ordinary laptop connection* is itself a VPN/proxy.
-
-**`NO_EDITOR` or yellow `CHECK`.** A country-block page, login challenge, slow loading, or a changed Gemini UI may hide the editor. Inspect the matching screenshot; do not assume the port is blocked without explicit evidence.
-
-**`ERR_NETWORK_CHANGED` or navigation timeout.** The browser is switching routes while its connections may persist. Results can be transient. Increase `RETRY_DELAY`, `READY_WAIT`, and/or `RETRIES` or verify the affected target manually.
-
-**Gemini visibly answers but status is not green.** The response selector may have changed, or the detected answer did not stabilize. Inspect screenshots; adjust `ANSWER_WAIT` / `RESPONSE_STABLE`. A yellow status is deliberately conservative.
-
-**Docker/Xray SOCKS is unavailable.** Check `docker info`, the configured `XRAY_IMAGE`, and whether `SOCKS_PORT` is already occupied. The container is ephemeral; check Docker daemon permissions.
-
-**Chrome profile appears locked.** Close any other Chrome window using `PROFILE_DIR`. The dedicated profile is separate from your regular browser profile.
-
-**Want all available CLI options?** `python src/session_audit.py --help`.
-
-### 7. Run automated checks
+## Testing and contributing
 
 ```bash
-python -m compileall -q src
-python -m unittest discover -s tests -p 'test_*.py'
+python3 -m compileall -q src
+python3 -m unittest discover -s tests -p 'test_*.py'
 ```
 
-GitHub Actions runs Python checks on pushes and pull requests. These are **unit/static checks**, not a live 61-server Gemini audit. Live behavior depends on the local environment, Google account and exit IPs.
+A GitHub Actions workflow runs those checks on pushes and pull requests. This is a lightweight unit test suite; it is **not** an end-to-end Gemini account and network integration test. The script intentionally does not download or commit Chrome session cookies, saved passwords, VLESS UUIDs, or subscription tokens.
 
 ## Security and privacy
 
-- **Never commit** `.env`, private VLESS URIs / UUIDs, subscription tokens, Google passwords, browser profiles, cookies, or screenshots. `.gitignore` excludes the primary local secret/profile/report locations.
-- `.env` should have permissions `600`. Consider rotating credentials already shared publicly.
-- Local Chrome profiles contain authenticated session data; protect the machine and profile folder.
-- The subscription is fetched from the URL supplied by **you**. Only use subscription providers you trust.
-- Docker grants powerful host-level privileges to members with socket access.
-- Results are local files and are not submitted to this repository or any telemetry endpoint by the script.
+- Keep `.env`, `.local/`, `reports/`, keys and screenshots on your own machine. They are ignored by [`.gitignore`](.gitignore).
+- **Do not paste private VLESS URLs, UUIDs, subscription tokens, API keys, or Google cookies** into public issues, commits, logs or screenshots.
+- The dedicated Chrome profile holds authentication material and should be protected like a password.
+- The tool sends test prompts to Gemini under the signed-in Google account. Choose appropriate use limits.
+- The subscription fetch is performed by your local script; it is not uploaded to GitHub.
+- The program does **not** change your server-side routing, firewall or balancer configuration.
 
-## Known limitations
+## Limitations and roadmap
 
-1. **Gemini Web is not Gemini Android.** A Web result cannot establish Android app usability.
-2. **Exit IP is not independently verified per target.** Chrome may reuse connection/DNS state when the Xray backend changes; therefore results are observational, not authoritative evidence of the expected exit IP.
-3. **Google's UI is not a stable API.** Country/response selectors may need updates as Gemini changes.
-4. **Subscriptions are limited to VLESS TCP/RAW link lists.** Other protocols and structured subscriptions are not supported.
-5. **Login challenges and regional detection can vary by account, time and provider.**
-6. **This is not a balancer manager.** It never changes PasarGuard, Xray, or backend routing configurations.
+This is an independent community tool, not affiliated with Google, Mullvad or Xray. Gemini's DOM, availability rules and authentication flows can change. The current proxy parser does not support all Xray transports or subscription formats. Possible future improvements include verifying the actual public exit IP for every probe, better response-container compatibility, full connection isolation per destination, and optional JSON/HTML report summaries.
 
-## Project layout
-
-```text
-src/
-  session_audit.py     # Recommended CLI: Chrome login + browser testing
-  sources.py           # .env, subscription and port parsing
-  vless.py             # VLESS URL and Xray config creation
-  audit.py             # Xray Docker helper and older audit command
-  login.py             # Standalone direct Chrome login
-tests/                 # Unit checks
-data/ports.csv         # Legacy 61-port reference; not read by session_audit.py
-.env.example           # Public sample settings (never secrets)
-VERSION                # Release version
-CHANGELOG.md           # Release notes
-```
-
-## Versioning
-
-The first documented version is **v1.0.0** (see `VERSION` and `CHANGELOG.md`). A Git tag / GitHub Release should only be published after reviewing the corresponding CI results and verifying the desired commit.
-
-## License
-
-No license grant is implied solely by making a repository public. If you want others to reuse, modify or distribute the code under explicit terms, add a suitable `LICENSE` file.
+See [CHANGELOG.md](CHANGELOG.md) for the version history.
