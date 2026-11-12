@@ -96,12 +96,27 @@ VLESS transports beyond TCP/RAW are **not tested**; skipped formats appear in
 the terminal. For subscription mode, the program tests each link's original
 server and port, **not** the `PORTS` ranges.
 
-A large **red instruction panel** appears when Chrome opens:
+### Login first without Xray (default)
 
-1. Sign in to Google in that Chrome window.
-2. Send a test message and confirm Gemini replied.
-3. **Leave Chrome open**.
-4. Return to the terminal and press **Enter**.
+The login phase must **not** use the tested VLESS/WireGuard exit IP.
+With `LOGIN_DIRECT=true` in your **local** `.env`:
+
+1. Ordinary Chrome opens with `--no-proxy-server`, on the laptop's own internet connection, with the dedicated local profile.
+2. Sign into Google manually and press Enter in the terminal.
+3. The script closes that direct-login Chrome, waits for the profile to be released, then starts a *new* Chrome **via Xray SOCKS** using the same local profile.
+4. The tests begin automatically. Login credentials are never sent to GitHub or stored in `.env`.
+
+**Direct login does not guarantee Google retains the session** after
+switching to a different exit country; Google can ask for login or identity
+verification again. Those cases should be treated as `LOGIN_REQUIRED`
+rather than evidence the target server is broken.
+
+To skip the direct-login step if already authenticated, set
+`LOGIN_DIRECT=false` or pass `--skip-direct-login`. For a fresh login
+run, leave `LOGIN_DIRECT=true` or pass `--login-direct`.
+The direct-login Chrome is always closed before tests, regardless of
+`CLOSE_BROWSER`. The test Chrome is closed after tests when
+`CLOSE_BROWSER=true`.
 
 ### Response detection behavior
 
@@ -151,6 +166,7 @@ python src/session_audit.py
 | `RESPONSE_STABLE` | `4` | Seconds model response stays stable before marking OK |
 | `RETRY_DELAY` | `7` | Seconds between retry attempts |
 | `PAUSE` | `8` | Seconds between ports |
+| `LOGIN_DIRECT` | `true` | Open normal Chrome without Xray for manual Google sign-in first |
 | `CLOSE_BROWSER` | `true` | Close dedicated test Chrome after completion or Ctrl+C |
 | `CHROME_PATH` | empty | Optional Google Chrome executable override |
 | `PROFILE_DIR` | `.local/browser-profile` | Local Chrome user profile |
