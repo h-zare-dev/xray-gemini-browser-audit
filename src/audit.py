@@ -64,10 +64,12 @@ def wait_listen(port, process, timeout=20):
 
 
 class Xray:
-    def __init__(self, outbound, destination, socks_port):
+    def __init__(self, outbound, destination, socks_port, image=IMAGE, startup_timeout=20):
         self.outbound = outbound
         self.destination = destination
         self.socks_port = socks_port
+        self.image = image
+        self.startup_timeout = startup_timeout
         self.container = f"gemini-audit-{os.getpid()}-{destination}"
         self.process = None
         self.tmp = None
@@ -83,11 +85,11 @@ class Xray:
             "--network=bridge", "-p", f"127.0.0.1:{self.socks_port}:{self.socks_port}/tcp",
             "--mount", f"type=bind,source={conf.resolve()},target=/tmp/config.json,readonly",
             "--cap-drop=ALL", "--security-opt", "no-new-privileges",
-            "--entrypoint", "/usr/local/bin/xray", IMAGE, "run", "-c", "/tmp/config.json"
+            "--entrypoint", "/usr/local/bin/xray", self.image, "run", "-c", "/tmp/config.json"
         ]
         self.log_file = open(Path(self.tmp.name) / "xray.log", "w")
         self.process = subprocess.Popen(command, stdout=self.log_file, stderr=subprocess.STDOUT)
-        if not wait_listen(self.socks_port, self.process):
+        if not wait_listen(self.socks_port, self.process, timeout=self.startup_timeout):
             self.__exit__(None, None, None)
             raise RuntimeError("Xray SOCKS not available; check Docker and image")
         return self
