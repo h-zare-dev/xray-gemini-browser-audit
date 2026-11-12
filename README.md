@@ -123,6 +123,25 @@ The browser layout is not a stable public API; if Google changes its DOM
 the script can still report yellow for a valid answer. Verify corresponding
 screenshots instead of treating that as a failed proxy.
 
+### Configure retries and response timeout in `.env`
+
+Add these values to your **local** `.env` file (or copy them from
+`.env.example`):
+
+```dotenv
+RETRIES=3
+ANSWER_WAIT=70
+```
+
+`RETRIES` is the maximum number of attempts for errors/uncertain
+results (minimum 3). A confirmed `WEB_OK` stops after one attempt.
+`ANSWER_WAIT` is the number of seconds to wait for Gemini's reply
+**after sending a prompt**; it is not the page navigation timeout.
+
+**Precedence:** explicit command-line option > local `.env` > built-in
+default. For example, `python src/session_audit.py --answer-wait 100
+--retries 4` overrides the .env for that run only.
+
 ### Terminal colors, pacing and retries
 
 The current auditor uses clear colored status lines:
