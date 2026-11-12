@@ -88,6 +88,77 @@ def wait_cdp(process, port, timeout=25):
     return False
 
 
+
+def editor_contains_marker(editor, marker):
+    """Check the live compose field without mistaking page copies for submission."""
+    try:
+        value = editor.input_value(timeout=700)
+    except Exception:
+        try:
+            value = editor.inner_text(timeout=700)
+        except Exception:
+            return None
+    return marker in value
+
+
+def submission_confirmed(page, editor, marker):
+    """User message exists, or the text was cleared from the live editor."""
+    try:
+        queries = page.locator("user-query")
+        if queries.count() and marker in queries.last.inner_text(timeout=700):
+            return True
+    except Exception:
+        pass
+    return editor_contains_marker(editor, marker) is False
+
+
+def wait_for_submission(page, editor, marker, seconds):
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        if submission_confirmed(page, editor, marker):
+            return True
+        page.wait_for_timeout(350)
+    return submission_confirmed(page, editor, marker)
+
+
+def submit_gemini_prompt(page, editor, marker, seconds=6):
+    """Try Enter, verify delivery, then click Send if the prompt remains unsent."""
+    editor.fill(f"Reply with exactly {marker}", timeout=10000)
+    editor.press("Enter", timeout=10000)
+    first_wait = min(2.5, seconds / 2)
+    if wait_for_submission(page, editor, marker, first_wait):
+        return True, "Submitted with Enter"
+
+    # Never click again if we have evidence the first submit succeeded.
+    if submission_confirmed(page, editor, marker):
+        return True, "Submitted with Enter"
+
+    # Gemini changes DOM frequently. Use several button selectors but require
+    # an enabled, visible button; do not click arbitrary controls.
+    buttons = page.locator(
+        'button[aria-label="Send message"], '
+        'button[aria-label="Send"], '
+        'button[data-test-id="send-button"], '
+        'button.send-button, '
+        'button[aria-label="ارسال"]'
+    )
+    clicked = False
+    for index in range(buttons.count()):
+        button = buttons.nth(index)
+        try:
+            if button.is_visible() and button.is_enabled():
+                button.click(timeout=2000)
+                clicked = True
+                break
+        except Exception:
+            continue
+    if clicked and wait_for_submission(page, editor, marker, max(0.5, seconds - first_wait)):
+        return True, "Submitted using Send button"
+    return False, ("Send button clicked but no confirmed submission"
+                   if clicked else "Enter did not submit; no usable Send button")
+
+
+
 def check_gemini(page, args, label):
     """Probe Gemini Web; a visible prompt alone is never success."""
     # Phase A: total pre-submit budget (navigation + editor readiness).
@@ -141,10 +212,12 @@ def check_gemini(page, args, label):
     marker = f"GEMTEST{label}X".replace("-", "").replace("_", "")
     editor = editors.last
     try:
-        editor.fill(f"Reply with exactly {marker}", timeout=12000)
-        editor.press("Enter", timeout=12000)
-    except Exception:
-        return "INCONCLUSIVE", "Could not submit prompt; page may still be loading"
+        sent, submit_detail = submit_gemini_prompt(page, editor, marker)
+        if not sent:
+            return "SUBMIT_FAILED", submit_detail
+    except Exception as exc:
+        return "SUBMIT_FAILED", f"Prompt submission failed: {type(exc).__name__}"
+
     # A message appearing twice in the *whole body* is not proof of a model
     # answer: the user prompt, drafts and accessibility nodes can duplicate it.
     # We therefore wait for the model-response element AND a stable answer.
@@ -208,6 +281,8 @@ def consolidate(attempts):
         return "CONNECTION_FAILED_CONFIRMED", "Network failed on all 3 attempts"
     if "LOGIN_REQUIRED" in states:
         return "LOGIN_REQUIRED", "Google login/security challenge: manual review needed"
+    if all(st == "SUBMIT_FAILED" for st in states):
+        return "SUBMIT_FAILED", "Gemini prompt remained unsent; check screenshot"
     if all(st == "NO_EDITOR" for st in states):
         return "NO_EDITOR", "No message box appeared within readiness budget"
     if "RESPONSE_CANDIDATE" in states:
