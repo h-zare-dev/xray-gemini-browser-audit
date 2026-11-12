@@ -103,6 +103,30 @@ A large **red instruction panel** appears when Chrome opens:
 3. **Leave Chrome open**.
 4. Return to the terminal and press **Enter**.
 
+### Terminal colors, pacing and retries
+
+The current auditor uses clear colored status lines:
+
+- **GREEN / OK**: Generated marker found inside Gemini's response element (`WEB_OK`).
+- **YELLOW / CHECK**: Login challenge, possible reply, missing editor or inconsistent outcomes. **Do not remove this server from the balancer.**
+- **RED / BLOCKED**: A country restriction explicitly appeared on **all three attempts**. A repeated network failure is also marked red, but still needs review before permanent removal.
+
+Default behavior: `--ready-wait 25` seconds for page/editor readiness,
+`--timeout 55` seconds for navigation, `--answer-wait 70` seconds for a
+generated answer, `--retries 3`, `--retry-delay 7` seconds, and
+`--pause 8` seconds between ports. Any uncertain/error result is retried
+three times; successful `WEB_OK` stops early. Screenshots are saved per
+attempt as `PORT_tryN.png`. More deliberate testing:
+
+```bash
+python src/session_audit.py --ports 23001,23004,23007 --retries 3 --ready-wait 35 --answer-wait 90 --retry-delay 10 --pause 10
+```
+
+The output CSV includes `attempts` and `attempt_results`. A colored line
+or green result only describes **Gemini Web**, never guarantees Gemini Android
+works with that exit IP. Browser transport may reuse state across proxies;
+do not treat one run as proof for changing production balancers.
+
 After that, the report is `reports/session/results.csv`. Screenshots are also
 stored locally. The browser is launched through Xray Docker, but there is no
 Xray installation on the host.
