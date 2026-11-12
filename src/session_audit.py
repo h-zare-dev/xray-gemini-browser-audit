@@ -175,7 +175,10 @@ def main():
         with sync_playwright() as playwright:
             browser = playwright.chromium.connect_over_cdp(f"http://127.0.0.1:{cdp_port}")
             context = browser.contexts[0]
-            page = next((q for q in context.pages if "gemini.google.com" in q.url), context.new_page())
+            page = next((q for q in context.pages if "gemini.google.com" in q.url), None)
+            if page is None:
+                page = context.new_page()
+            page.bring_to_front()
             for index, target in enumerate(targets, 1):
                 status, detail = "TEST_ERROR", ""
                 label = f"{index}_{target.port}"
