@@ -49,6 +49,22 @@ def banner(title, lines, color=RED):
     print("╚" + "═" * width + "╝" + tail, flush=True)
 
 
+def make_run_directory(base_path, started_at=None):
+    """Create a unique local-time directory per run; never overwrite past results."""
+    started_at = started_at or datetime.now().astimezone()
+    base = Path(base_path)
+    base.mkdir(parents=True, exist_ok=True)
+    stamp = started_at.strftime("%Y-%m-%d_%H-%M-%S")
+    for suffix in range(10000):
+        candidate = base / (stamp if suffix == 0 else f"{stamp}_{suffix:02d}")
+        try:
+            candidate.mkdir(exist_ok=False)
+            return candidate
+        except FileExistsError:
+            continue
+    raise RuntimeError("Could not allocate a unique report directory")
+
+
 def chrome_bin():
     return shutil.which("google-chrome-stable") or shutil.which("google-chrome")
 
@@ -329,8 +345,8 @@ def main():
     except (ValueError, OSError) as exc:
         p.error(str(exc))
 
-    output = Path(args.output)
-    output.mkdir(parents=True, exist_ok=True)
+    output = make_run_directory(args.output)
+    print(f"Run results folder: {output}", flush=True)
     profile = Path(args.profile).resolve()
     profile.mkdir(parents=True, exist_ok=True)
     profile.chmod(0o700)
