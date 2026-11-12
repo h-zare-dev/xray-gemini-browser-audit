@@ -25,7 +25,14 @@ YELLOW = "\033[1;33m"
 GREEN = "\033[1;32m"
 CYAN = "\033[1;36m"
 RESET = "\033[0m"
-REGION = re.compile(r"this country isn.t supported|not available in your country|isn't available in your country|not available in your region", re.I)
+REGION = re.compile(
+    r"gemini\\s+isn.t\\s+(?:currently\\s+)?supported\\s+in\\s+your\\s+country"
+    r"|(?:this|your)\\s+country\\s+isn.t\\s+supported"
+    r"|not\\s+available\\s+in\\s+your\\s+(?:country|region)"
+    r"|isn.t\\s+available\\s+in\\s+your\\s+(?:country|region)"
+    r"|not\\s+supported\\s+in\\s+your\\s+(?:country|region)",
+    re.I,
+)
 LOGIN = re.compile(r"sign in to save activity|sign in to connect to google apps|couldn.t sign you in|verify it.s you", re.I)
 
 
@@ -67,36 +74,48 @@ def wait_cdp(process, port, timeout=25):
 
 def check_gemini(page, args, label):
     """Probe Gemini Web; a visible prompt alone is never success."""
+    # Phase A: total pre-submit budget (navigation + editor readiness).
+    # Even if TIMEOUT is large, this stage never intentionally waits longer
+    # than READY_WAIT. Phase B uses ANSWER_WAIT only after prompt submission.
     from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+    phase_start = time.monotonic()
+    deadline = phase_start + args.ready_wait
+    selectors = '[contenteditable="true"]:visible, textarea:visible, [role="textbox"]:visible'
+    editors = page.locator(selectors)
+    navigation_error = None
     try:
+        navigation_budget = max(1000, int(min(args.timeout, args.ready_wait) * 1000))
         page.goto("https://gemini.google.com/app", wait_until="domcontentloaded",
-                  timeout=args.timeout * 1000)
+                  timeout=navigation_budget)
     except PlaywrightTimeoutError:
-        return "RETRYABLE_NETWORK", "Page load timed out; will retry"
+        navigation_error = "Page load exceeded pre-submit budget"
     except Exception as exc:
         if "ERR_NETWORK_CHANGED" in str(exc) or "ERR_CONNECTION" in str(exc):
-            return "RETRYABLE_NETWORK", "Network changed during port switch; will retry"
-        raise
+            navigation_error = "Connection interrupted while loading page"
+        else:
+            raise
 
-    # Wait for a useful ready state instead of using a fixed 3-second sleep.
-    selectors = '[contenteditable="true"]:visible, textarea:visible, [role="textbox"]:visible'
-    until = time.monotonic() + args.ready_wait
-    body = ""
-    editors = page.locator(selectors)
-    while time.monotonic() < until:
+    while time.monotonic() < deadline:
         try:
-            body = page.locator("body").inner_text(timeout=5000)
+            # First check country restriction: Gemini can render a blocked
+            # landing page without ever creating its prompt editor.
+            body = page.locator("body").inner_text(timeout=1000)
             if REGION.search(body):
-                return "REGION_BLOCKED", "Gemini Web explicitly says country unsupported"
+                return "REGION_BLOCKED", "Gemini says this country is unsupported"
             if LOGIN.search(body) or page.get_by_text("Sign in", exact=True).count() > 0:
-                return "LOGIN_REQUIRED", "Google account signed out or verification required"
+                return "LOGIN_REQUIRED", "Google login/verification required"
             if editors.count() > 0:
                 break
         except Exception:
             pass
-        page.wait_for_timeout(1000)
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            page.wait_for_timeout(min(700, max(1, int(remaining * 1000))))
     else:
-        return "INCONCLUSIVE", "Prompt editor not ready after waiting for page"
+        # No editor within the initial budget. Do not spend ANSWER_WAIT here.
+        if navigation_error:
+            return "RETRYABLE_NETWORK", navigation_error
+        return "NO_EDITOR", "No Gemini message box within ready-wait; no prompt sent"
 
     marker = f"GEMTEST{label}X".replace("-", "").replace("_", "")
     editor = editors.last
@@ -166,6 +185,8 @@ def consolidate(attempts):
         return "CONNECTION_FAILED_CONFIRMED", "Network failed on all 3 attempts"
     if "LOGIN_REQUIRED" in states:
         return "LOGIN_REQUIRED", "Google login/security challenge: manual review needed"
+    if all(st == "NO_EDITOR" for st in states):
+        return "NO_EDITOR", "No message box appeared within readiness budget"
     if "RESPONSE_CANDIDATE" in states:
         return "RESPONSE_CANDIDATE", "Possible model response; screenshot review required"
     return "INCONCLUSIVE", "Mixed or inconclusive results; do not remove this server"
@@ -190,7 +211,7 @@ DEFAULTS = {
     "TIMEOUT": 55,
     "ANSWER_WAIT": 70,
     "RESPONSE_STABLE": 4,
-    "READY_WAIT": 25,
+    "READY_WAIT": 15,
     "RETRIES": 3,
     "RETRY_DELAY": 7,
     "PAUSE": 8,
@@ -310,7 +331,8 @@ def main():
     banner("XRAY GEMINI BROWSER AUDIT", [
         f"Mode: {env.get('MODE','vless')} | tests: {len(targets)} | skipped: {len(skipped)}",
         f"Retries: {args.retries} | Answer wait: {args.answer_wait}s",
-        f"Page timeout: {args.timeout}s | Stable: {args.response_stable}s",
+        f"Pre-submit: {args.ready_wait}s max | Answer: {args.answer_wait}s",
+        f"Navigation cap: {args.timeout}s | Stable: {args.response_stable}s",
         f"Close Chrome automatically: {args.close_browser}",
         "Sources stay in local .env only; no credentials are committed.",
         "Only Gemini Web behavior is being tested, not Android.",
