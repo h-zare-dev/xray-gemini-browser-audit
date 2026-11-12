@@ -1,5 +1,7 @@
 # Xray Gemini Browser Audit
 
+[راهنمای فارسی | Persian setup and usage guide](docs/README.fa.md)
+
 ![Version](https://img.shields.io/badge/version-v1.0.0-blue)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![Docker](https://img.shields.io/badge/Xray-Docker-2496ED?logo=docker&logoColor=white)
