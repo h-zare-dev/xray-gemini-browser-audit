@@ -11,15 +11,15 @@ class OutcomeTests(unittest.TestCase):
         status, _ = consolidate([("WEB_OK", "response")])
         self.assertEqual(status, "WEB_OK")
 
-    def test_three_region_rejections_confirm_block(self):
-        status, _ = consolidate([("REGION_BLOCKED", "a")] * 3)
-        self.assertEqual(status, "REGION_BLOCKED_CONFIRMED")
+    def test_region_rejection_stops_without_retries(self):
+        status, _ = consolidate([("REGION_BLOCKED", "a")])
+        self.assertEqual(status, "REGION_BLOCKED")
 
     def test_mixed_region_is_not_confirmed(self):
         status, _ = consolidate([("REGION_BLOCKED", "a"),
                                   ("RETRYABLE_NETWORK", "b"),
                                   ("REGION_BLOCKED", "c")])
-        self.assertEqual(status, "INCONCLUSIVE")
+        self.assertEqual(status, "REGION_BLOCKED")
 
     def test_three_network_errors(self):
         status, _ = consolidate([("RETRYABLE_NETWORK", "a")] * 3)
