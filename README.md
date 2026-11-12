@@ -41,6 +41,21 @@ The audit asks for your VLESS URI through hidden input, then runs official Xray 
 
 Do not run normal Chrome and audit simultaneously with the same dedicated profile. Never publish, upload, or copy the profile. Google session cookies can grant account access.
 
+## Recommended: single native Chrome window (experimental)
+
+This mode keeps **one standard Google Chrome window** open while testing three ports. It uses CDP to inspect the page but does not launch a new Playwright-controlled Chrome for every port. You sign in manually inside this window before the tests start. Xray itself still runs in temporary Docker containers.
+
+```bash
+git pull origin main
+python src/session_audit.py --ports 23001,23004,23007
+```
+
+Paste the VLESS URL when prompted (hidden). Chrome opens through the first port, then sign in manually and **verify Gemini can actually answer**. Leave Chrome open and press Enter in the terminal to start testing all selected ports.
+
+Do not run `--login` or another Chrome process using this same dedicated profile at the same time. Google may still challenge the login after the exit IP changes. This tool labels guest mode as `LOGIN_REQUIRED` and ambiguous responses as `INCONCLUSIVE`, never "Gemini working".
+
+*Known limitation:* Chrome connections/DNS/session state can persist across port switches. Treat results as preliminary until verified by fresh requests and screenshots. Chrome's security systems may block automation or reauthentication; we do not bypass them.
+
 ## Compare with known Android results
 
 ```bash
