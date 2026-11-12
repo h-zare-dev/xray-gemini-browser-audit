@@ -66,35 +66,105 @@ def wait_cdp(process, port, timeout=25):
 
 
 def check_gemini(page, args, label):
-    # Force a fresh document on every probe. Existing Chrome connections can
-    # still survive an Xray restart, so do not infer actual IP from these tests.
-    page.goto("https://gemini.google.com/app", wait_until="domcontentloaded",
-              timeout=args.timeout * 1000)
-    page.wait_for_timeout(3000)
-    body = page.locator("body").inner_text(timeout=12000)
-    if REGION.search(body):
-        return "REGION_BLOCKED", "Gemini Web shows unsupported country"
-    if LOGIN.search(body) or page.get_by_text("Sign in", exact=True).count() > 0:
-        return "LOGIN_REQUIRED", "Google session missing or security challenge"
+    """Probe Gemini Web; a visible prompt alone is never success."""
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+    try:
+        page.goto("https://gemini.google.com/app", wait_until="domcontentloaded",
+                  timeout=args.timeout * 1000)
+    except PlaywrightTimeoutError:
+        return "RETRYABLE_NETWORK", "Page load timed out; will retry"
+    except Exception as exc:
+        if "ERR_NETWORK_CHANGED" in str(exc) or "ERR_CONNECTION" in str(exc):
+            return "RETRYABLE_NETWORK", "Network changed during port switch; will retry"
+        raise
 
-    editors = page.locator('[contenteditable="true"]:visible, textarea:visible, [role="textbox"]:visible')
-    if not editors.count():
-        return "INCONCLUSIVE", "Gemini editor not found; check screenshot"
-    marker = f"GEMTEST{label}X".replace("-", "")
+    # Wait for a useful ready state instead of using a fixed 3-second sleep.
+    selectors = '[contenteditable="true"]:visible, textarea:visible, [role="textbox"]:visible'
+    until = time.monotonic() + args.ready_wait
+    body = ""
+    editors = page.locator(selectors)
+    while time.monotonic() < until:
+        try:
+            body = page.locator("body").inner_text(timeout=5000)
+            if REGION.search(body):
+                return "REGION_BLOCKED", "Gemini Web explicitly says country unsupported"
+            if LOGIN.search(body) or page.get_by_text("Sign in", exact=True).count() > 0:
+                return "LOGIN_REQUIRED", "Google account signed out or verification required"
+            if editors.count() > 0:
+                break
+        except Exception:
+            pass
+        page.wait_for_timeout(1000)
+    else:
+        return "INCONCLUSIVE", "Prompt editor not ready after waiting for page"
+
+    marker = f"GEMTEST{label}X".replace("-", "").replace("_", "")
     editor = editors.last
-    editor.fill(f"Reply with exactly {marker}")
-    editor.press("Enter")
+    try:
+        editor.fill(f"Reply with exactly {marker}", timeout=12000)
+        editor.press("Enter", timeout=12000)
+    except Exception:
+        return "INCONCLUSIVE", "Could not submit prompt; page may still be loading"
     end = time.monotonic() + args.answer_wait
     while time.monotonic() < end:
-        page.wait_for_timeout(1500)
-        body = page.locator("body").inner_text(timeout=12000)
-        if REGION.search(body):
-            return "REGION_BLOCKED", "Unsupported country after submission"
-        if LOGIN.search(body):
-            return "LOGIN_REQUIRED", "Login challenge after submission"
-        if body.count(marker) >= 2:
-            return "RESPONSE_CANDIDATE", "Response-like text; inspect screenshot before trusting"
-    return "INCONCLUSIVE", "No reliable answer before timeout"
+        page.wait_for_timeout(1800)
+        try:
+            body = page.locator("body").inner_text(timeout=6000)
+            if REGION.search(body):
+                return "REGION_BLOCKED", "Gemini explicitly rejected country after submission"
+            if LOGIN.search(body):
+                return "LOGIN_REQUIRED", "Google login or security challenge"
+            # Check only generated-response containers to avoid mistaking the
+            # user's own text for an answer.
+            response = page.locator(
+                "model-response .markdown, .model-response-text, "
+                ".response-container .markdown, message-content .markdown"
+            )
+            if response.count() and any(marker in t for t in response.all_inner_texts()):
+                return "WEB_OK", "Gemini Web generated a matching model response"
+            if body.count(marker) >= 2:
+                return "RESPONSE_CANDIDATE", "Possible model reply; response element not verified"
+        except Exception:
+            pass
+    return "INCONCLUSIVE", "No confirmed model answer before response timeout"
+
+
+def state_style(status):
+    """Color is based on evidence, not optimistic inference."""
+    if status == "WEB_OK":
+        return GREEN, "OK"
+    if status == "REGION_BLOCKED_CONFIRMED":
+        return RED, "BLOCKED"
+    if status == "CONNECTION_FAILED_CONFIRMED":
+        return RED, "NETWORK ERROR"
+    return YELLOW, "CHECK"
+
+
+def consolidate(attempts):
+    """Never turn a transient or mixed result into a confirmed failure."""
+    states = [row[0] for row in attempts]
+    if "WEB_OK" in states:
+        return "WEB_OK", "Received a verified model response"
+    if len(states) >= 3 and all(st == "REGION_BLOCKED" for st in states):
+        return "REGION_BLOCKED_CONFIRMED", "Country restriction repeated on 3 attempts"
+    if len(states) >= 3 and all(st == "RETRYABLE_NETWORK" for st in states):
+        return "CONNECTION_FAILED_CONFIRMED", "Network failed on all 3 attempts"
+    if "LOGIN_REQUIRED" in states:
+        return "LOGIN_REQUIRED", "Google login/security challenge: manual review needed"
+    if "RESPONSE_CANDIDATE" in states:
+        return "RESPONSE_CANDIDATE", "Possible model response; screenshot review required"
+    return "INCONCLUSIVE", "Mixed or inconclusive results; do not remove this server"
+
+
+def log_result(index, total, target, status, detail, attempts):
+    color, label = state_style(status)
+    color = color if sys.stdout.isatty() and not os.environ.get("NO_COLOR") else ""
+    reset = RESET if color else ""
+    print(
+        f"{color}[{index:03d}/{total}] {label:<13} "
+        f"{target.name[:28]:<28} port={target.port:<5} "
+        f"tries={attempts} | {detail}{reset}", flush=True
+    )
 
 
 def main():
@@ -104,10 +174,18 @@ def main():
     p.add_argument("--profile", default=".local/browser-profile")
     p.add_argument("--output", default="reports/session")
     p.add_argument("--socks-port", type=int, default=18998)
-    p.add_argument("--timeout", type=int, default=35)
-    p.add_argument("--answer-wait", type=int, default=45)
-    p.add_argument("--pause", type=float, default=4)
+    p.add_argument("--timeout", type=int, default=55)
+    p.add_argument("--answer-wait", type=int, default=70)
+    p.add_argument("--ready-wait", type=int, default=25,
+                   help="Wait for Gemini editor to load (seconds)")
+    p.add_argument("--retries", type=int, default=3,
+                   help="Minimum attempts for uncertain/error results (default 3)")
+    p.add_argument("--retry-delay", type=float, default=7,
+                   help="Seconds between retry attempts")
+    p.add_argument("--pause", type=float, default=8)
     args = p.parse_args()
+    if args.retries < 3:
+        p.error("--retries must be at least 3")
 
     chrome = chrome_bin()
     if not chrome:
@@ -180,26 +258,50 @@ def main():
                 page = context.new_page()
             page.bring_to_front()
             for index, target in enumerate(targets, 1):
-                status, detail = "TEST_ERROR", ""
                 label = f"{index}_{target.port}"
-                try:
-                    with Xray(outbound_from_url(target.uri), target.port, args.socks_port):
-                        try:
-                            status, detail = check_gemini(page, args, label)
-                        finally:
+                attempts = []
+                status, detail = "INCONCLUSIVE", "No completed attempts"
+                for attempt in range(1, args.retries + 1):
+                    try:
+                        with Xray(outbound_from_url(target.uri), target.port, args.socks_port):
+                            # A fresh tab prevents stale document state between
+                            # retries; browser profile/session remain the same.
+                            test_page = context.new_page()
                             try:
-                                page.screenshot(path=str(output / f"{index:04d}_{target.port}.png"),
-                                                timeout=8000)
-                            except Exception:
-                                pass
-                except Exception as exc:
-                    detail = f"{type(exc).__name__}: {str(exc)[:200]}"
+                                attempt_status, attempt_detail = check_gemini(
+                                    test_page, args, f"{label}_{attempt}"
+                                )
+                                try:
+                                    test_page.screenshot(
+                                        path=str(output / f"{index:04d}_{target.port}_try{attempt}.png"),
+                                        timeout=8000
+                                    )
+                                except Exception:
+                                    pass
+                            finally:
+                                test_page.close()
+                    except Exception as exc:
+                        msg = str(exc)
+                        attempt_status = "RETRYABLE_NETWORK" if (
+                            "ERR_NETWORK_CHANGED" in msg or "Timeout" in type(exc).__name__
+                            or "timed out" in msg.lower()
+                        ) else "TEST_ERROR"
+                        attempt_detail = f"{type(exc).__name__}: {msg[:130]}"
+                    attempts.append((attempt_status, attempt_detail))
+                    if attempt_status == "WEB_OK":
+                        break
+                    if attempt < args.retries:
+                        time.sleep(args.retry_delay)
+
+                status, detail = consolidate(attempts)
                 rows.append({
                     "timestamp_utc": datetime.now(timezone.utc).isoformat(),
                     "index": index, "name": target.name, "port": target.port,
-                    "status": status, "detail": detail
+                    "status": status, "detail": detail,
+                    "attempts": len(attempts),
+                    "attempt_results": ";".join(item[0] for item in attempts)
                 })
-                print(f"[{index:03d}/{len(targets)}] {target.name[:36]} port={target.port} {status} {detail}", flush=True)
+                log_result(index, len(targets), target, status, detail, len(attempts))
                 if index < len(targets):
                     time.sleep(args.pause)
             browser.close()
@@ -208,7 +310,7 @@ def main():
     finally:
         path = output / "results.csv"
         with path.open("w", newline="", encoding="utf8") as f:
-            w = csv.DictWriter(f, fieldnames=["timestamp_utc", "index", "name", "port", "status", "detail"])
+            w = csv.DictWriter(f, fieldnames=["timestamp_utc", "index", "name", "port", "status", "detail", "attempts", "attempt_results"])
             w.writeheader()
             w.writerows(rows)
         print("\nREPORT:", path, flush=True)
