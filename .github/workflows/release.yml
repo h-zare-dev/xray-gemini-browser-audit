@@ -1,0 +1,50 @@
+name: Publish GitHub Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - VERSION
+      - CHANGELOG.md
+      - .github/workflows/release.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout release source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Verify version and changelog
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid VERSION"; exit 1; }
+          grep -Fq "## [$VERSION]" CHANGELOG.md || { echo "Missing changelog section"; exit 1; }
+          echo "RELEASE_TAG=v$VERSION" >> "$GITHUB_ENV"
+      - name: Publish release, if not already present
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists. No changes made."
+            exit 0
+          fi
+          gh release create "$RELEASE_TAG" \
+            --target "$GITHUB_SHA" \
+            --title "Xray Gemini Browser Audit $RELEASE_TAG" \
+            --notes-file CHANGELOG.md \
+            --latest
+          gh release view "$RELEASE_TAG" --json url,isDraft,isPrerelease,tagName
