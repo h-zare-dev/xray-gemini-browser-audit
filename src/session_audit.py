@@ -182,46 +182,99 @@ def log_result(index, total, target, status, detail, attempts):
     )
 
 
+# Defaults remain unchanged unless overridden explicitly.
+DEFAULTS = {
+    "PROFILE_DIR": ".local/browser-profile",
+    "OUTPUT_DIR": "reports/session",
+    "SOCKS_PORT": 18998,
+    "TIMEOUT": 55,
+    "ANSWER_WAIT": 70,
+    "RESPONSE_STABLE": 4,
+    "READY_WAIT": 25,
+    "RETRIES": 3,
+    "RETRY_DELAY": 7,
+    "PAUSE": 8,
+    "XRAY_IMAGE": IMAGE,
+    "XRAY_STARTUP_TIMEOUT": 20,
+    "CHROME_PATH": "",
+    "CLOSE_BROWSER": True,
+}
+
+
+def settings_from_env(args, env):
+    """CLI > .env > built-in defaults, applied to all runtime controls."""
+    mapping = {
+        "profile": ("PROFILE_DIR", str),
+        "output": ("OUTPUT_DIR", str),
+        "socks_port": ("SOCKS_PORT", int),
+        "timeout": ("TIMEOUT", int),
+        "answer_wait": ("ANSWER_WAIT", int),
+        "response_stable": ("RESPONSE_STABLE", float),
+        "ready_wait": ("READY_WAIT", int),
+        "retries": ("RETRIES", int),
+        "retry_delay": ("RETRY_DELAY", float),
+        "pause": ("PAUSE", float),
+        "xray_image": ("XRAY_IMAGE", str),
+        "xray_startup_timeout": ("XRAY_STARTUP_TIMEOUT", int),
+        "chrome_path": ("CHROME_PATH", str),
+    }
+    for attribute, (key, cast) in mapping.items():
+        current = getattr(args, attribute, None)
+        if current is not None:
+            value = current
+        else:
+            try:
+                value = cast(env.get(key, DEFAULTS[key]))
+            except (ValueError, TypeError):
+                raise ValueError(f"{key} must be a valid {cast.__name__}")
+        setattr(args, attribute, value)
+    if args.close_browser is None:
+        val = str(env.get("CLOSE_BROWSER", "true")).strip().lower()
+        if val not in ("true", "false", "1", "0", "yes", "no", "on", "off"):
+            raise ValueError("CLOSE_BROWSER must be true or false")
+        args.close_browser = val in ("true", "1", "yes", "on")
+    if args.retries < 3:
+        raise ValueError("RETRIES must be at least 3")
+    for key in ("timeout", "answer_wait", "ready_wait", "xray_startup_timeout"):
+        if getattr(args, key) < 1:
+            raise ValueError(f"{key.upper()} must be at least 1")
+    if args.response_stable < 0 or args.pause < 0 or args.retry_delay < 0:
+        raise ValueError("RESPONSE_STABLE, PAUSE and RETRY_DELAY cannot be negative")
+    if not 1024 <= args.socks_port <= 65535:
+        raise ValueError("SOCKS_PORT must be between 1024 and 65535")
+    if not args.xray_image.strip():
+        raise ValueError("XRAY_IMAGE cannot be empty")
+    return args
+
+
 def main():
     p = argparse.ArgumentParser(description="Browser audit using VLESS or subscription from .env")
     p.add_argument("--env", default=".env", help="Local .env file (ignored by git)")
     p.add_argument("--ports", default=None, help="Override PORTS, e.g. 21001-21009,23001,23004,25001-25025")
-    p.add_argument("--profile", default=".local/browser-profile")
-    p.add_argument("--output", default="reports/session")
-    p.add_argument("--socks-port", type=int, default=18998)
-    p.add_argument("--timeout", type=int, default=55)
-    p.add_argument("--answer-wait", type=int, default=None,
-                   help="Gemini response wait seconds (CLI > ANSWER_WAIT in .env > 70)")
-    p.add_argument("--response-stable", type=float, default=4,
-                   help="Seconds the assistant answer must remain stable before success")
-    p.add_argument("--ready-wait", type=int, default=25,
-                   help="Wait for Gemini editor to load (seconds)")
-    p.add_argument("--retries", type=int, default=None,
-                   help="Attempts for uncertain/error results (CLI > RETRIES in .env > 3)")
-    p.add_argument("--retry-delay", type=float, default=7,
-                   help="Seconds between retry attempts")
-    p.add_argument("--pause", type=float, default=8)
+    p.add_argument("--profile", default=None, help="Chrome profile (PROFILE_DIR in .env)")
+    p.add_argument("--output", default=None, help="Report directory (OUTPUT_DIR in .env)")
+    p.add_argument("--socks-port", type=int, default=None)
+    p.add_argument("--timeout", type=int, default=None)
+    p.add_argument("--answer-wait", type=int, default=None)
+    p.add_argument("--response-stable", type=float, default=None)
+    p.add_argument("--ready-wait", type=int, default=None)
+    p.add_argument("--retries", type=int, default=None)
+    p.add_argument("--retry-delay", type=float, default=None)
+    p.add_argument("--pause", type=float, default=None)
+    p.add_argument("--xray-image", default=None)
+    p.add_argument("--xray-startup-timeout", type=int, default=None)
+    p.add_argument("--chrome-path", default=None)
+    p.add_argument("--close-browser", dest="close_browser", action="store_true")
+    p.add_argument("--keep-browser", dest="close_browser", action="store_false")
+    p.set_defaults(close_browser=None)
     args = p.parse_args()
-
-    # CLI arguments override .env; .env overrides built-in defaults.
     env = read_env(args.env)
     try:
-        args.retries = (
-            args.retries if args.retries is not None
-            else int(env.get("RETRIES", "3"))
-        )
-        args.answer_wait = (
-            args.answer_wait if args.answer_wait is not None
-            else int(env.get("ANSWER_WAIT", "70"))
-        )
-    except ValueError:
-        p.error("RETRIES and ANSWER_WAIT must be integer numbers")
-    if args.retries < 3:
-        p.error("RETRIES must be at least 3")
-    if args.answer_wait < 1:
-        p.error("ANSWER_WAIT must be at least 1 second")
+        settings_from_env(args, env)
+    except ValueError as exc:
+        p.error(str(exc))
 
-    chrome = chrome_bin()
+    chrome = args.chrome_path or chrome_bin()
     if not chrome:
         p.error("Google Chrome must be installed")
     if not shutil.which("docker"):
@@ -247,14 +300,16 @@ def main():
     banner("XRAY GEMINI BROWSER AUDIT", [
         f"Mode: {env.get('MODE','vless')} | tests: {len(targets)} | skipped: {len(skipped)}",
         f"Retries: {args.retries} | Answer wait: {args.answer_wait}s",
+        f"Page timeout: {args.timeout}s | Stable: {args.response_stable}s",
+        f"Close Chrome automatically: {args.close_browser}",
         "Sources stay in local .env only; no credentials are committed.",
         "Only Gemini Web behavior is being tested, not Android.",
     ], CYAN)
     for index, protocol, reason in skipped:
         print(f"SKIPPED subscription entry #{index} ({protocol}): {reason}")
 
-    if subprocess.run(["docker", "image", "inspect", IMAGE], capture_output=True).returncode:
-        subprocess.run(["docker", "pull", IMAGE], check=True)
+    if subprocess.run(["docker", "image", "inspect", args.xray_image], capture_output=True).returncode:
+        subprocess.run(["docker", "pull", args.xray_image], check=True)
 
     # Bootstrap through first source; require user to verify Gemini before tests.
     browser_process = None
@@ -262,7 +317,8 @@ def main():
     cdp_port = free_port()
     first = targets[0]
     try:
-        with Xray(outbound_from_url(first.uri), first.port, args.socks_port):
+        with Xray(outbound_from_url(first.uri), first.port, args.socks_port,
+                  image=args.xray_image, startup_timeout=args.xray_startup_timeout):
             command = [
                 chrome, f"--user-data-dir={profile}", "--no-first-run",
                 "--remote-debugging-address=127.0.0.1",
@@ -297,7 +353,8 @@ def main():
                 status, detail = "INCONCLUSIVE", "No completed attempts"
                 for attempt in range(1, args.retries + 1):
                     try:
-                        with Xray(outbound_from_url(target.uri), target.port, args.socks_port):
+                        with Xray(outbound_from_url(target.uri), target.port, args.socks_port,
+                                  image=args.xray_image, startup_timeout=args.xray_startup_timeout):
                             # A fresh tab prevents stale document state between
                             # retries; browser profile/session remain the same.
                             test_page = context.new_page()
@@ -351,7 +408,18 @@ def main():
         print("WARNING: Changing Xray while Chrome stays open can retain connections.")
         print("Results are candidates only; confirm via screenshots and Android before changing balancers.")
         if browser_process and browser_process.poll() is None:
-            print("Chrome left open; close it manually before next run.")
+            if args.close_browser:
+                # Only terminate the dedicated Chrome process we started.
+                # Never touch the user's ordinary Chrome profile/processes.
+                browser_process.terminate()
+                try:
+                    browser_process.wait(timeout=8)
+                except subprocess.TimeoutExpired:
+                    browser_process.kill()
+                    browser_process.wait(timeout=5)
+                print("Test Chrome closed automatically; local login profile preserved.")
+            else:
+                print("Chrome left open (CLOSE_BROWSER=false). Close manually before next run.")
 
 
 if __name__ == "__main__":
