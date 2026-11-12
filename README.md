@@ -103,6 +103,26 @@ A large **red instruction panel** appears when Chrome opens:
 3. **Leave Chrome open**.
 4. Return to the terminal and press **Enter**.
 
+### Response detection behavior
+
+The auditor now waits for a stable **assistant response** inside the `model-response`
+element. A duplicate test marker elsewhere on the page no longer ends the
+attempt immediately. The assistant reply must stay unchanged for at least
+`--response-stable 4` seconds before `WEB_OK` can be reported. If the
+response container is missing, the audit waits through `--answer-wait`
+before returning `RESPONSE_CANDIDATE` or `INCONCLUSIVE`.
+
+For a slower three-port check:
+
+```bash
+python src/session_audit.py --ports 23001,23004,23007 \\
+  --answer-wait 100 --response-stable 5 --ready-wait 35 --retries 3
+```
+
+The browser layout is not a stable public API; if Google changes its DOM
+the script can still report yellow for a valid answer. Verify corresponding
+screenshots instead of treating that as a failed proxy.
+
 ### Terminal colors, pacing and retries
 
 The current auditor uses clear colored status lines:
