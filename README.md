@@ -123,24 +123,50 @@ The browser layout is not a stable public API; if Google changes its DOM
 the script can still report yellow for a valid answer. Verify corresponding
 screenshots instead of treating that as a failed proxy.
 
-### Configure retries and response timeout in `.env`
+### Full `.env` configuration
 
-Add these values to your **local** `.env` file (or copy them from
-`.env.example`):
+The settings in `.env.example` are the recommended defaults. Copy only
+once if you do not already have a private `.env`, then add your own
+`VLESS_URL` or `SUBSCRIPTION_URL`.
 
-```dotenv
-RETRIES=3
-ANSWER_WAIT=70
+```bash
+git pull origin main
+# Only if .env does not already exist:
+cp -n .env.example .env
+chmod 600 .env
+nano .env
+python src/session_audit.py
 ```
 
-`RETRIES` is the maximum number of attempts for errors/uncertain
-results (minimum 3). A confirmed `WEB_OK` stops after one attempt.
-`ANSWER_WAIT` is the number of seconds to wait for Gemini's reply
-**after sending a prompt**; it is not the page navigation timeout.
+| Env key | Default | Meaning |
+| --- | --- | --- |
+| `MODE` | `vless` | `vless` or `subscription` |
+| `VLESS_URL` | blank | Private single VLESS URL |
+| `PORTS` | 61 test ports | Comma-separated ports and inclusive ranges |
+| `SUBSCRIPTION_URL` | blank | Private subscription address |
+| `RETRIES` | `3` | Attempts for uncertain/error results (minimum 3) |
+| `ANSWER_WAIT` | `70` | Seconds waiting for Gemini reply after submitting |
+| `TIMEOUT` | `55` | Page navigation timeout in seconds |
+| `READY_WAIT` | `25` | Seconds waiting for prompt editor to load |
+| `RESPONSE_STABLE` | `4` | Seconds model response stays stable before marking OK |
+| `RETRY_DELAY` | `7` | Seconds between retry attempts |
+| `PAUSE` | `8` | Seconds between ports |
+| `CLOSE_BROWSER` | `true` | Close dedicated test Chrome after completion or Ctrl+C |
+| `CHROME_PATH` | empty | Optional Google Chrome executable override |
+| `PROFILE_DIR` | `.local/browser-profile` | Local Chrome user profile |
+| `OUTPUT_DIR` | `reports/session` | CSV and screenshots |
+| `SOCKS_PORT` | `18998` | Local SOCKS port |
+| `XRAY_IMAGE` | `ghcr.io/xtls/xray-core:26.3.27` | Official Docker image |
+| `XRAY_STARTUP_TIMEOUT` | `20` | Seconds to wait for local Xray startup |
 
-**Precedence:** explicit command-line option > local `.env` > built-in
-default. For example, `python src/session_audit.py --answer-wait 100
---retries 4` overrides the .env for that run only.
+The terminal still accepts optional overrides, e.g. `--retries 4`,
+`--answer-wait 100`, `--timeout 70`, and `--keep-browser`.
+Precedence: command line > `.env` > built-in defaults.
+
+The audit only closes its **dedicated** Chrome process. It never touches the
+ordinary Chrome profile. Existing Chrome login/session data persists under
+`.local/browser-profile` unless you delete it. Neither profile nor `.env`
+is committed to Git.
 
 ### Terminal colors, pacing and retries
 
