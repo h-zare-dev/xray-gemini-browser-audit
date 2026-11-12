@@ -26,11 +26,11 @@ GREEN = "\033[1;32m"
 CYAN = "\033[1;36m"
 RESET = "\033[0m"
 REGION = re.compile(
-    r"gemini\\s+isn.t\\s+(?:currently\\s+)?supported\\s+in\\s+your\\s+country"
-    r"|(?:this|your)\\s+country\\s+isn.t\\s+supported"
-    r"|not\\s+available\\s+in\\s+your\\s+(?:country|region)"
-    r"|isn.t\\s+available\\s+in\\s+your\\s+(?:country|region)"
-    r"|not\\s+supported\\s+in\\s+your\\s+(?:country|region)",
+    r"gemini\s+isn.t\s+(?:currently\s+)?supported\s+in\s+your\s+country"
+    r"|(?:this|your)\s+country\s+isn.t\s+supported"
+    r"|not\s+available\s+in\s+your\s+(?:country|region)"
+    r"|isn.t\s+available\s+in\s+your\s+(?:country|region)"
+    r"|not\s+supported\s+in\s+your\s+(?:country|region)",
     re.I,
 )
 LOGIN = re.compile(r"sign in to save activity|sign in to connect to google apps|couldn.t sign you in|verify it.s you", re.I)
@@ -167,7 +167,7 @@ def state_style(status):
     """Color is based on evidence, not optimistic inference."""
     if status == "WEB_OK":
         return GREEN, "OK"
-    if status == "REGION_BLOCKED_CONFIRMED":
+    if status in ("REGION_BLOCKED", "REGION_BLOCKED_CONFIRMED"):
         return RED, "BLOCKED"
     if status == "CONNECTION_FAILED_CONFIRMED":
         return RED, "NETWORK ERROR"
@@ -177,6 +177,8 @@ def state_style(status):
 def consolidate(attempts):
     """Never turn a transient or mixed result into a confirmed failure."""
     states = [row[0] for row in attempts]
+    if "REGION_BLOCKED" in states:
+        return "REGION_BLOCKED", "Explicit country-block message detected; no retry needed"
     if "WEB_OK" in states:
         return "WEB_OK", "Received a verified model response"
     if len(states) >= 3 and all(st == "REGION_BLOCKED" for st in states):
@@ -443,7 +445,9 @@ def main():
                         ) else "TEST_ERROR"
                         attempt_detail = f"{type(exc).__name__}: {msg[:130]}"
                     attempts.append((attempt_status, attempt_detail))
-                    if attempt_status == "WEB_OK":
+                    if attempt_status in ("WEB_OK", "REGION_BLOCKED"):
+                        # An explicit country restriction is definitive for
+                        # this browser visit. No benefit in repeating it.
                         break
                     if attempt < args.retries:
                         time.sleep(args.retry_delay)
